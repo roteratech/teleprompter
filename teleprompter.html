@@ -1,0 +1,2542 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TeleSync Pro — Speech-Synchronized Broadcast Teleprompter</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+            studio: {
+              950: '#07090e',
+              900: '#0c1017',
+              850: '#111722',
+              800: '#17202f',
+              700: '#232f42',
+              600: '#334155'
+            },
+            record: {
+              500: '#ef4444',
+              600: '#dc2626'
+            },
+            cue: {
+              cyan: '#06b6d4',
+              amber: '#f59e0b',
+              emerald: '#10b981'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+            serif: ['Merriweather', 'Georgia', 'serif'],
+            display: ['Montserrat', 'Inter', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts & Lucide Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Merriweather:wght@400;700&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(99, 102, 241, 0.4);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(99, 102, 241, 0.8);
+    }
+
+    /* Prompter Mirroring */
+    .mirror-horizontal {
+      transform: scaleX(-1);
+    }
+    .mirror-vertical {
+      transform: scaleY(-1);
+    }
+    .mirror-both {
+      transform: scale(-1, -1);
+    }
+
+    /* Word token transitions */
+    .token-word {
+      display: inline-block;
+      transition: color 0.18s ease, transform 0.15s ease, background-color 0.2s ease, opacity 0.2s ease;
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 0 2px;
+      margin: 0 1px;
+    }
+    .token-word:hover {
+      background-color: rgba(99, 102, 241, 0.2);
+    }
+    .token-spoken {
+      opacity: 0.45;
+    }
+    .token-active {
+      opacity: 1 !important;
+      font-weight: 800;
+      color: #38bdf8 !important;
+      background: rgba(56, 189, 248, 0.22);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.45);
+      transform: scale(1.08);
+    }
+    .token-sentence-active {
+      border-bottom: 2px solid rgba(56, 189, 248, 0.35);
+    }
+
+    /* Smooth auto-scrolling container */
+    #prompter-scroll-viewport {
+      scroll-behavior: auto; /* Managed programmatically via requestAnimationFrame for subpixel smoothness */
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* Pulsing recording tally badge */
+    @keyframes pulse-tally {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.92); }
+    }
+    .animate-tally {
+      animation: pulse-tally 1.3s infinite ease-in-out;
+    }
+
+    /* Floating glass effects */
+    .glass-panel {
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-hud {
+      background: rgba(11, 16, 26, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+  </style>
+</head>
+
+<body class="bg-studio-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-brand-500 selection:text-white antialiased overflow-x-hidden">
+
+  <!-- TOP BROADCAST HEADER -->
+  <header class="h-14 border-b border-studio-800 bg-studio-900/90 backdrop-blur-md px-4 flex items-center justify-between z-30 sticky top-0">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 to-cue-cyan flex items-center justify-center shadow-lg shadow-brand-500/20">
+        <i data-lucide="tv" class="w-4 h-4 text-white"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold tracking-wider text-sm text-white font-display">TELESYNC</span>
+          <span class="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30">PRO STUDIO</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Status Indicators -->
+    <div class="flex items-center gap-4 text-xs">
+      <!-- VAD & Mic Level Indicator -->
+      <div id="mic-status-badge" class="flex items-center gap-2 px-2.5 py-1 rounded-full bg-studio-800 border border-studio-700/60 transition-all">
+        <i data-lucide="mic" class="w-3.5 h-3.5 text-slate-400" id="mic-icon"></i>
+        <div class="w-14 h-1.5 bg-studio-950 rounded-full overflow-hidden flex">
+          <div id="mic-vu-bar" class="w-0 h-full bg-cue-emerald transition-all duration-75"></div>
+        </div>
+        <span id="speech-state-label" class="text-[11px] font-mono text-slate-400">IDLE</span>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="hidden sm:flex items-center bg-studio-800/80 p-0.5 rounded-lg border border-studio-700">
+        <button onclick="app.setRoute('dashboard')" id="nav-dashboard" class="px-3 py-1 rounded-md text-xs font-medium text-white bg-brand-600 shadow transition-all">Dashboard</button>
+        <button onclick="app.setRoute('editor')" id="nav-editor" class="px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition-all">Editor</button>
+        <button onclick="app.setRoute('studio')" id="nav-studio" class="px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition-all flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-cue-cyan animate-ping"></span>
+          Studio
+        </button>
+        <button onclick="app.setRoute('recordings')" id="nav-recordings" class="px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition-all">Recordings</button>
+      </div>
+
+      <!-- Enter Studio Button -->
+      <button onclick="app.launchStudio()" class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-brand-600/30 transition-all">
+        <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+        <span>Go Live</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="flex-1 flex relative overflow-hidden">
+
+    <!-- 1. DASHBOARD SCREEN -->
+    <div id="route-dashboard" class="route-view w-full p-4 md:p-8 max-w-7xl mx-auto space-y-6 overflow-y-auto">
+      <!-- Welcome Hero Banner -->
+      <div class="p-6 md:p-8 rounded-2xl bg-gradient-to-r from-studio-900 via-studio-850 to-studio-900 border border-studio-700/60 relative overflow-hidden shadow-2xl">
+        <div class="absolute -right-10 -bottom-10 w-80 h-80 bg-brand-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="relative z-10 max-w-2xl">
+          <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-cue-cyan/10 border border-cue-cyan/30 text-cue-cyan text-xs font-semibold mb-3">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            Voice-Activated Teleprompter Engine
+          </div>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight text-white mb-2 font-display">
+            Natural speech pacing. Never lose your script.
+          </h1>
+          <p class="text-slate-400 text-sm leading-relaxed mb-6">
+            The scrolling pauses automatically when you stop speaking and advances smoothly as you utter each word. Compatible with webcam recording, studio mirror beam-splitters, and multiple speech languages.
+          </p>
+          <div class="flex flex-wrap items-center gap-3">
+            <button onclick="app.createNewScript()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-500/30 transition-all">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              New Script
+            </button>
+            <button onclick="document.getElementById('file-importer-dash').click()" class="px-4 py-2 bg-studio-800 hover:bg-studio-700 text-slate-200 border border-studio-700 rounded-xl text-sm font-medium flex items-center gap-2 transition-all">
+              <i data-lucide="upload" class="w-4 h-4"></i>
+              Import File (TXT / MD)
+            </button>
+            <input type="file" id="file-importer-dash" accept=".txt,.md" class="hidden" onchange="app.handleFileImport(event)">
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Metrics & Scripts Section -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="p-4 rounded-xl bg-studio-900/80 border border-studio-800 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-brand-400">
+            <i data-lucide="file-text" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 font-medium">Saved Scripts</div>
+            <div id="stat-scripts-count" class="text-xl font-bold text-white font-mono">0</div>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-studio-900/80 border border-studio-800 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-lg bg-cue-cyan/10 border border-cue-cyan/20 flex items-center justify-center text-cue-cyan">
+            <i data-lucide="video" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 font-medium">Recordings</div>
+            <div id="stat-recordings-count" class="text-xl font-bold text-white font-mono">0</div>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-studio-900/80 border border-studio-800 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <i data-lucide="languages" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 font-medium">Speech Recognition</div>
+            <div id="stat-active-lang" class="text-sm font-bold text-white">English (US)</div>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-studio-900/80 border border-studio-800 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 font-medium">Sync Mode</div>
+            <div id="stat-sync-mode" class="text-sm font-bold text-white">Speech-Tracked</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scripts Library -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <i data-lucide="folder-open" class="w-5 h-5 text-brand-400"></i>
+            Script Library
+          </h2>
+          <span class="text-xs text-slate-400">Click a script to load or edit</span>
+        </div>
+        <div id="dashboard-scripts-list" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. SCRIPT EDITOR SCREEN -->
+    <div id="route-editor" class="route-view hidden w-full h-[calc(100vh-3.5rem)] flex flex-col overflow-hidden bg-studio-950">
+      <!-- Editor Action Bar -->
+      <div class="h-14 border-b border-studio-800 bg-studio-900 px-4 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3 flex-1 max-w-xl">
+          <input type="text" id="editor-title-input" class="bg-studio-800 text-white font-semibold px-3 py-1.5 rounded-lg border border-studio-700 text-sm focus:outline-none focus:border-brand-500 w-full" placeholder="Script Title...">
+          <span id="editor-autosave-indicator" class="text-[11px] font-mono text-slate-400 whitespace-nowrap">Auto-saved</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <!-- Text Stats -->
+          <div class="hidden md:flex items-center gap-3 px-3 py-1 bg-studio-800/80 rounded-lg border border-studio-700/60 text-xs font-mono text-slate-300">
+            <span><strong id="editor-word-count" class="text-brand-400">0</strong> words</span>
+            <span>•</span>
+            <span><strong id="editor-char-count" class="text-slate-200">0</strong> chars</span>
+            <span>•</span>
+            <span>Est: <strong id="editor-duration-est" class="text-cue-cyan">0m 00s</strong></span>
+          </div>
+
+          <!-- Actions -->
+          <button onclick="document.getElementById('file-importer-editor').click()" title="Import File" class="p-2 text-slate-300 hover:text-white bg-studio-800 rounded-lg border border-studio-700 hover:border-studio-600 transition-all">
+            <i data-lucide="file-up" class="w-4 h-4"></i>
+          </button>
+          <input type="file" id="file-importer-editor" accept=".txt,.md" class="hidden" onchange="app.handleFileImport(event)">
+
+          <button onclick="app.exportCurrentScript()" title="Export Script (.txt)" class="p-2 text-slate-300 hover:text-white bg-studio-800 rounded-lg border border-studio-700 hover:border-studio-600 transition-all">
+            <i data-lucide="download" class="w-4 h-4"></i>
+          </button>
+
+          <button onclick="app.launchStudio()" class="px-3.5 py-1.5 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-brand-500/20 transition-all">
+            <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+            Prompter Studio
+          </button>
+        </div>
+      </div>
+
+      <!-- Editor Textarea Area -->
+      <div class="flex-1 p-4 md:p-8 overflow-y-auto max-w-4xl mx-auto w-full flex flex-col">
+        <textarea id="editor-content-textarea" class="flex-1 w-full bg-transparent text-slate-100 placeholder:text-slate-600 text-lg md:text-xl font-sans leading-relaxed focus:outline-none resize-none" placeholder="Paste or compose your broadcast script here...
+The teleprompter will automatically identify spoken words and sentences.
+Short pauses will hold your spot, and continuing will seamlessly glide the script forward."></textarea>
+      </div>
+    </div>
+
+    <!-- 3. RECORDINGS SCREEN -->
+    <div id="route-recordings" class="route-view hidden w-full p-6 md:p-8 max-w-7xl mx-auto space-y-6 overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-studio-800 pb-4">
+        <div>
+          <h1 class="text-xl font-bold text-white font-display">Recordings Library</h1>
+          <p class="text-xs text-slate-400">High-definition takes recorded during your teleprompter sessions</p>
+        </div>
+        <button onclick="app.clearRecordings()" class="px-3 py-1.5 bg-studio-800 hover:bg-red-950/40 text-slate-300 hover:text-red-400 border border-studio-700 hover:border-red-900 rounded-lg text-xs transition-all flex items-center gap-1.5">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          Clear All
+        </button>
+      </div>
+      <div id="recordings-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+
+    <!-- 4. FULL-SCREEN TELEPROMPTER STUDIO SCREEN -->
+    <div id="route-studio" class="route-view hidden fixed inset-0 z-50 bg-studio-950 flex flex-col select-none overflow-hidden">
+      
+      <!-- Studio Live Camera Background Layer -->
+      <div id="camera-viewport-container" class="absolute inset-0 pointer-events-none overflow-hidden transition-opacity duration-300" style="opacity: 0.65;">
+        <video id="webcam-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
+        <!-- Contrast Overlay Shroud -->
+        <div id="camera-overlay-shroud" class="absolute inset-0 bg-studio-950/80 backdrop-blur-[1px] transition-all"></div>
+      </div>
+
+      <!-- STUDIO TOP BROADCAST HUD -->
+      <div class="relative z-30 h-14 px-4 flex items-center justify-between glass-hud border-b border-white/10 shrink-0">
+        <!-- Left: Exit & Title & Recording Status -->
+        <div class="flex items-center gap-3">
+          <button onclick="app.exitStudio()" class="p-2 bg-studio-800/80 hover:bg-studio-700 text-slate-300 hover:text-white rounded-lg border border-white/10 transition-all" title="Exit Studio (Esc)">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          </button>
+          
+          <div>
+            <div id="studio-script-title" class="font-bold text-sm text-white max-w-[180px] md:max-w-xs truncate">Broadcast Script</div>
+            <div class="flex items-center gap-2 text-[10px] font-mono text-slate-400">
+              <span id="studio-mode-tag" class="text-cue-cyan font-semibold uppercase">SPEECH SYNC</span>
+              <span>•</span>
+              <span id="studio-word-stat">0 / 0 words</span>
+            </div>
+          </div>
+
+          <!-- Tally Lamp / Recording Badge -->
+          <div id="studio-recording-badge" class="hidden items-center gap-2 px-2.5 py-1 rounded-full bg-record-600/20 border border-record-500/40 text-record-500 text-xs font-mono font-bold">
+            <span class="w-2.5 h-2.5 rounded-full bg-record-500 animate-tally"></span>
+            <span>REC</span>
+            <span id="studio-record-timer">00:00</span>
+          </div>
+        </div>
+
+        <!-- Center: Quick Prompter Playback Actions -->
+        <div class="flex items-center gap-2">
+          <!-- Restart Script -->
+          <button onclick="app.prompterEngine.restartScript()" class="p-2 text-slate-300 hover:text-white bg-studio-800/70 hover:bg-studio-700 rounded-lg border border-white/10 transition-all" title="Restart to Beginning">
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Toggle Play/Pause Button -->
+          <button id="studio-btn-playpause" onclick="app.togglePrompterState()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white font-semibold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-brand-500/30 transition-all">
+            <i data-lucide="mic" class="w-4 h-4 fill-current" id="studio-play-icon"></i>
+            <span id="studio-play-label">Listening</span>
+          </button>
+
+          <!-- Record Camera Button -->
+          <button id="studio-btn-record" onclick="app.toggleRecording()" class="px-3.5 py-2 bg-studio-800 hover:bg-studio-700 text-record-500 hover:text-record-400 border border-white/10 rounded-xl text-xs font-bold flex items-center gap-2 transition-all">
+            <span class="w-3 h-3 rounded-full bg-record-500"></span>
+            <span id="studio-record-btn-text">Record Take</span>
+          </button>
+        </div>
+
+        <!-- Right: Studio Tool Toggles & Fullscreen -->
+        <div class="flex items-center gap-1.5">
+          <!-- Quick Mode Switcher Button -->
+          <button id="studio-quick-mode-btn" onclick="app.cyclePrompterMode()" class="px-2.5 py-1.5 bg-studio-800 text-cue-cyan font-mono text-[11px] font-bold rounded-lg border border-white/10 hover:border-cue-cyan/40 transition-all flex items-center gap-1" title="Click to Change Mode">
+            <i data-lucide="zap" class="w-3 h-3 text-cue-cyan"></i>
+            <span id="studio-quick-mode-label">HYBRID</span>
+          </button>
+
+          <!-- Quick Speech Language Selector -->
+          <select id="studio-quick-lang" class="bg-studio-800 text-white text-[11px] font-semibold rounded-lg border border-white/10 px-2 py-1.5 focus:outline-none focus:border-brand-500 cursor-pointer" title="Speech Language" onchange="app.updateSetting('speechLanguage', this.value); app.speechService.setLanguage(this.value);">
+            <option value="tr-TR">🇹🇷 TR</option>
+            <option value="az-AZ">🇦🇿 AZ</option>
+            <option value="en-US">🇺🇸 EN</option>
+            <option value="ru-RU">🇷🇺 RU</option>
+            <option value="es-ES">🇪🇸 ES</option>
+            <option value="de-DE">🇩🇪 DE</option>
+            <option value="fr-FR">🇫🇷 FR</option>
+          </select>
+
+          <!-- Toggle Settings Drawer -->
+          <button onclick="app.toggleStudioDrawer('settings')" class="p-2 text-slate-300 hover:text-white bg-studio-800/70 hover:bg-studio-700 rounded-lg border border-white/10 transition-all" title="Prompter Settings">
+            <i data-lucide="sliders" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Toggle Mirror Horizontal -->
+          <button onclick="app.toggleMirror('horizontal')" id="btn-mirror-h" class="p-2 text-slate-300 hover:text-white bg-studio-800/70 hover:bg-studio-700 rounded-lg border border-white/10 transition-all" title="Mirror Beam Splitter (Horizontal Flip)">
+            <i data-lucide="flip-horizontal" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Toggle Mirror Vertical -->
+          <button onclick="app.toggleMirror('vertical')" id="btn-mirror-v" class="p-2 text-slate-300 hover:text-white bg-studio-800/70 hover:bg-studio-700 rounded-lg border border-white/10 transition-all" title="Mirror Beam Splitter (Vertical Flip)">
+            <i data-lucide="flip-vertical" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Fullscreen -->
+          <button onclick="app.toggleFullscreen()" class="p-2 text-slate-300 hover:text-white bg-studio-800/70 hover:bg-studio-700 rounded-lg border border-white/10 transition-all" title="Fullscreen Prompter">
+            <i data-lucide="maximize" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- PROMPTER VIEWPORT (Center Reading Zone) -->
+      <div class="relative flex-1 w-full overflow-hidden flex justify-center items-center">
+
+        <!-- Live Speech Recognition Subtitle HUD -->
+        <div id="studio-live-transcript-container" class="absolute top-4 z-30 pointer-events-none flex justify-center w-full px-4">
+          <div id="studio-live-transcript" class="px-4 py-1.5 rounded-full bg-studio-900/95 border border-cue-cyan/40 text-cue-cyan text-xs font-mono shadow-2xl transition-all duration-200 opacity-0 max-w-lg truncate flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-cue-cyan animate-ping shrink-0"></span>
+            <span id="studio-live-transcript-text" class="truncate font-semibold"></span>
+          </div>
+        </div>
+        
+        <!-- Center Focus Reading Guide Overlay Bar -->
+        <div id="prompter-focus-line" class="absolute left-0 right-0 pointer-events-none z-20 flex items-center justify-between px-6 transition-all duration-300" style="top: 35%; height: 3.5rem;">
+          <div class="flex items-center gap-1 text-cue-cyan font-mono text-[11px] font-bold bg-studio-950/80 px-2.5 py-1 rounded-l-md border border-cue-cyan/40 border-r-0 shadow-lg">
+            <i data-lucide="target" class="w-3.5 h-3.5"></i>
+            <span>CUE</span>
+          </div>
+          <div class="flex-1 h-[1.5px] bg-gradient-to-r from-cue-cyan/50 via-cue-cyan/20 to-cue-cyan/50 shadow-[0_0_8px_rgba(6,182,212,0.6)]"></div>
+          <div class="text-cue-cyan font-mono text-[11px] font-bold bg-studio-950/80 px-2 py-1 rounded-r-md border border-cue-cyan/40 border-l-0 shadow-lg">
+            <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Scrollable Text Viewport -->
+        <div id="prompter-scroll-viewport" class="relative w-full h-full overflow-y-auto px-6 py-0 flex justify-center z-10">
+          <div id="prompter-content-canvas" class="w-full max-w-4xl text-left transition-transform duration-100 ease-linear">
+            <!-- Text token words generated here -->
+          </div>
+        </div>
+      </div>
+
+      <!-- STUDIO SETTINGS DRAWER -->
+      <div id="studio-drawer" class="hidden absolute top-14 bottom-0 right-0 w-80 md:w-96 glass-hud border-l border-white/10 z-40 p-5 overflow-y-auto space-y-6 shadow-2xl transition-all">
+        <div class="flex items-center justify-between border-b border-white/10 pb-3">
+          <div class="flex items-center gap-2 text-white font-bold text-sm">
+            <i data-lucide="sliders-horizontal" class="w-4 h-4 text-brand-400"></i>
+            Studio Prompter Settings
+          </div>
+          <button onclick="app.toggleStudioDrawer('settings')" class="text-slate-400 hover:text-white">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+        <!-- 1. Scrolling & Speech Mode Settings -->
+        <div class="space-y-3">
+          <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sync & Scrolling Mode</label>
+          <div class="grid grid-cols-3 gap-1.5 bg-studio-900 p-1 rounded-xl border border-white/10 text-xs">
+            <button onclick="app.setPrompterMode('speech')" id="mode-opt-speech" class="py-1.5 rounded-lg font-medium text-white bg-brand-600 text-center transition-all">Speech</button>
+            <button onclick="app.setPrompterMode('auto')" id="mode-opt-auto" class="py-1.5 rounded-lg font-medium text-slate-400 hover:text-white text-center transition-all">Auto Speed</button>
+            <button onclick="app.setPrompterMode('hybrid')" id="mode-opt-hybrid" class="py-1.5 rounded-lg font-medium text-slate-400 hover:text-white text-center transition-all">Hybrid</button>
+          </div>
+
+          <!-- Auto Speed Slider (WPM) -->
+          <div class="space-y-1.5 pt-1">
+            <div class="flex justify-between text-xs font-mono text-slate-300">
+              <span>Auto-Scroll Pace:</span>
+              <span id="label-speed-wpm" class="text-brand-400 font-bold">140 WPM</span>
+            </div>
+            <input type="range" id="input-scroll-speed" min="60" max="300" step="5" value="140" class="w-full accent-brand-500" oninput="app.updateSetting('scrollSpeedWpm', Number(this.value))">
+          </div>
+        </div>
+
+        <!-- 2. Speech Language & Audio VAD Settings -->
+        <div class="space-y-3 border-t border-white/10 pt-4">
+          <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Speech Recognition</label>
+          
+          <div class="space-y-1.5">
+            <label class="text-xs text-slate-400">Language</label>
+            <select id="select-speech-language" class="w-full bg-studio-850 text-white rounded-lg border border-white/10 px-3 py-2 text-xs focus:outline-none focus:border-brand-500" onchange="app.updateSetting('speechLanguage', this.value)">
+              <option value="en-US">English (United States)</option>
+              <option value="en-GB">English (United Kingdom)</option>
+              <option value="az-AZ">Azerbaijani (Azərbaycan)</option>
+              <option value="tr-TR">Turkish (Türkçe)</option>
+              <option value="ru-RU">Russian (Русский)</option>
+              <option value="es-ES">Spanish (Español)</option>
+              <option value="de-DE">German (Deutsch)</option>
+              <option value="fr-FR">French (Français)</option>
+            </select>
+          </div>
+
+          <!-- Mic Sensitivity VAD Threshold -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-xs font-mono text-slate-300">
+              <span>VAD Noise Gate Threshold:</span>
+              <span id="label-vad-threshold" class="text-cue-emerald font-bold">18%</span>
+            </div>
+            <input type="range" id="input-vad-threshold" min="5" max="60" step="1" value="18" class="w-full accent-emerald-500" oninput="app.updateSetting('vadThreshold', Number(this.value))">
+            <p class="text-[10px] text-slate-500">Higher gate ignores background ambient studio noise.</p>
+          </div>
+        </div>
+
+        <!-- 3. Typography & Display Settings -->
+        <div class="space-y-3 border-t border-white/10 pt-4">
+          <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Typography & Layout</label>
+
+          <!-- Font Family -->
+          <div class="space-y-1">
+            <label class="text-xs text-slate-400">Font</label>
+            <select id="select-font-family" class="w-full bg-studio-850 text-white rounded-lg border border-white/10 px-3 py-1.5 text-xs" onchange="app.updateSetting('fontFamily', this.value)">
+              <option value="Inter, sans-serif">Inter (Modern Sans)</option>
+              <option value="Montserrat, sans-serif">Montserrat (Broadcast Headline)</option>
+              <option value="JetBrains Mono, monospace">JetBrains Mono (Technical)</option>
+              <option value="Merriweather, Georgia, serif">Merriweather (Classic Serif)</option>
+            </select>
+          </div>
+
+          <!-- Font Size Slider -->
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-xs font-mono text-slate-300">
+              <span>Font Size:</span>
+              <span id="label-font-size" class="text-brand-400 font-bold">48 px</span>
+            </div>
+            <input type="range" id="input-font-size" min="28" max="92" step="2" value="48" class="w-full accent-brand-500" oninput="app.updateSetting('fontSize', Number(this.value))">
+          </div>
+
+          <!-- Line Height & Text Alignment -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-slate-400">Line Height</label>
+              <select id="select-line-height" class="w-full bg-studio-850 text-white rounded-lg border border-white/10 px-2.5 py-1.5 text-xs" onchange="app.updateSetting('lineHeight', this.value)">
+                <option value="1.4">Tight (1.4)</option>
+                <option value="1.7" selected>Normal (1.7)</option>
+                <option value="2.1">Spacious (2.1)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400">Alignment</label>
+              <select id="select-text-align" class="w-full bg-studio-850 text-white rounded-lg border border-white/10 px-2.5 py-1.5 text-xs" onchange="app.updateSetting('textAlign', this.value)">
+                <option value="left" selected>Left</option>
+                <option value="center">Centered</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Color Customizer -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-slate-400">Text Color</label>
+              <div class="flex items-center gap-2 mt-1">
+                <input type="color" id="input-text-color" value="#ffffff" class="w-8 h-8 rounded border border-white/10 bg-transparent cursor-pointer" oninput="app.updateSetting('textColor', this.value)">
+                <span class="text-[11px] font-mono text-slate-400" id="hex-text-color">#FFFFFF</span>
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400">Cue Guide Color</label>
+              <div class="flex items-center gap-2 mt-1">
+                <input type="color" id="input-cue-color" value="#38bdf8" class="w-8 h-8 rounded border border-white/10 bg-transparent cursor-pointer" oninput="app.updateSetting('cueColor', this.value)">
+                <span class="text-[11px] font-mono text-slate-400" id="hex-cue-color">#38BDF8</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Camera & Live Video Overlay Settings -->
+        <div class="space-y-3 border-t border-white/10 pt-4">
+          <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Live Camera & Overlay</label>
+          
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-300">Enable Live Camera Preview</span>
+            <input type="checkbox" id="check-camera-enable" checked class="w-4 h-4 accent-brand-500 cursor-pointer" onchange="app.updateSetting('cameraEnabled', this.checked)">
+          </div>
+
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-xs font-mono text-slate-300">
+              <span>Camera Feed Opacity:</span>
+              <span id="label-camera-opacity" class="text-brand-400 font-bold">65%</span>
+            </div>
+            <input type="range" id="input-camera-opacity" min="0" max="100" step="5" value="65" class="w-full accent-brand-500" oninput="app.updateSetting('cameraOpacity', Number(this.value))">
+          </div>
+
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-xs font-mono text-slate-300">
+              <span>Background Shroud Darkness:</span>
+              <span id="label-shroud-opacity" class="text-brand-400 font-bold">80%</span>
+            </div>
+            <input type="range" id="input-shroud-opacity" min="0" max="98" step="2" value="80" class="w-full accent-brand-500" oninput="app.updateSetting('shroudOpacity', Number(this.value))">
+          </div>
+
+          <!-- Video Devices Selection -->
+          <div class="space-y-1">
+            <label class="text-xs text-slate-400">Camera Device</label>
+            <select id="select-camera-device" class="w-full bg-studio-850 text-white rounded-lg border border-white/10 px-2.5 py-1.5 text-xs" onchange="app.switchCameraDevice(this.value)">
+              <option value="">Default Front Camera</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- STUDIO FOOTER BAR (Progress & Quick Controls) -->
+      <div class="relative z-30 h-14 px-6 glass-hud border-t border-white/10 flex items-center justify-between shrink-0">
+        <!-- Progress Bar & Percentage -->
+        <div class="flex items-center gap-4 flex-1 max-w-md">
+          <div class="w-full h-2 bg-studio-900 rounded-full overflow-hidden border border-white/10">
+            <div id="studio-script-progress-bar" class="h-full bg-gradient-to-r from-brand-500 to-cue-cyan transition-all duration-200" style="width: 0%;"></div>
+          </div>
+          <span id="studio-progress-label" class="text-xs font-mono text-slate-400 whitespace-nowrap">0%</span>
+        </div>
+
+        <!-- Live VAD Voice Status Pill -->
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-studio-800/80 border border-white/10 text-xs">
+            <span id="studio-vad-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+            <span id="studio-vad-text" class="font-mono text-slate-300 text-[11px]">SILENCE</span>
+          </div>
+        </div>
+
+        <!-- Right Quick Controls -->
+        <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+          <span>Space: <kbd class="px-1.5 py-0.5 bg-studio-800 border border-white/10 rounded text-[10px]">Pause/Resume</kbd></span>
+          <span class="hidden md:inline">Esc: <kbd class="px-1.5 py-0.5 bg-studio-800 border border-white/10 rounded text-[10px]">Exit</kbd></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Video Preview & Save Modal -->
+    <div id="video-preview-modal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+      <div class="bg-studio-900 border border-studio-700 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-studio-800 pb-3">
+          <h3 class="text-lg font-bold text-white flex items-center gap-2">
+            <i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>
+            Take Recorded Successfully
+          </h3>
+          <button onclick="app.closePreviewModal()" class="text-slate-400 hover:text-white">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <div class="aspect-video bg-black rounded-xl overflow-hidden border border-studio-800">
+          <video id="playback-video-preview" controls class="w-full h-full object-contain"></video>
+        </div>
+
+        <div class="flex items-center justify-between pt-2">
+          <div class="text-xs font-mono text-slate-400" id="preview-modal-meta">Take #1 • 00:32</div>
+          <div class="flex items-center gap-2">
+            <button onclick="app.closePreviewModal()" class="px-4 py-2 bg-studio-800 hover:bg-studio-700 text-slate-200 rounded-xl text-xs font-semibold">Done</button>
+            <a id="btn-download-recording" download="Take-Teleprompter.webm" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-brand-500/20">
+              <i data-lucide="download" class="w-4 h-4"></i>
+              Download Video
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOTIFICATION TOAST CONTAINER -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 space-y-2 pointer-events-none"></div>
+
+  </main>
+
+  <script>
+    /**
+     * =========================================================================
+     * 1. AUDIO VAD (Voice Activity Detection) & SPEECH RECOGNITION SERVICE
+     * =========================================================================
+     */
+    class AudioVADEngine {
+      constructor() {
+        this.audioContext = null;
+        this.analyser = null;
+        this.mediaStream = null;
+        this.sourceNode = null;
+        this.dataArray = null;
+        this.isListening = false;
+        this.currentRms = 0;
+        this.isSpeaking = false;
+        this.silenceTimeoutTimer = null;
+        this.threshold = 0.18; // 18% normalized RMS (used as a sensitivity margin, see below)
+        this.silenceDelayMs = 1200; // Pause prompter after 1.2s silence
+        this.listeners = new Set();
+
+        // A single fixed RMS threshold doesn't hold up across different
+        // microphones/rooms: a quiet built-in laptop mic never crosses a
+        // threshold tuned for a loud USB mic, and vice versa. So instead we
+        // measure the room's actual ambient noise for a moment right after
+        // starting, and detect speech relative to THAT floor.
+        this.noiseFloor = 0.015;
+        this.isCalibrating = false;
+        this._calibrationSamples = [];
+        this._calibrationStartedAt = 0;
+        this._calibrationDurationMs = 600;
+      }
+
+      async start(stream) {
+        try {
+          // NOTE on echoCancellation: on many Android devices, turning on
+          // the browser's Acoustic Echo Canceler for the BUILT-IN mic makes
+          // Chrome attach that DSP effect to the same audio session the
+          // phone's own on-device speech recognizer (Web Speech API) reads
+          // from. That effect can end up starving/holding the built-in mic's
+          // capture, so the Web Speech API silently gets little or no audio
+          // from it even though this raw getUserMedia stream (used for the
+          // VU meter here) still reads fine — recording works, but spoken
+          // words never get recognized. External USB/Bluetooth mics use a
+          // separate audio path that isn't affected, which is why they work.
+          // Disabling AEC here only affects this raw level-metering stream,
+          // not the camera/recording audio track, so recording quality is
+          // unchanged; it just stops the built-in mic from being silently
+          // hijacked away from the speech recognizer.
+          this.mediaStream = stream || await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          });
+
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          this.audioContext = new AudioContextClass();
+          // Some browsers create a new AudioContext in a "suspended" state
+          // until a user gesture resumes it. If that happens here, the
+          // analyser silently receives no real audio and speech is never
+          // detected no matter how loud the user talks — so force a resume.
+          if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume().catch(() => {});
+          }
+          this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+          this.analyser = this.audioContext.createAnalyser();
+          this.analyser.fftSize = 512;
+          this.analyser.smoothingTimeConstant = 0.3;
+          this.sourceNode.connect(this.analyser);
+
+          this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+          this.isListening = true;
+
+          // Reset calibration so we (re)measure the ambient noise floor
+          // every time listening starts, since room/mic conditions may
+          // have changed since the last take.
+          this.isCalibrating = true;
+          this._calibrationSamples = [];
+          this._calibrationStartedAt = performance.now();
+
+          this._processAudioLoop();
+          return true;
+        } catch (err) {
+          console.warn("Microphone access failed or denied:", err);
+          return false;
+        }
+      }
+
+      stop() {
+        this.isListening = false;
+        if (this.sourceNode) {
+          try { this.sourceNode.disconnect(); } catch (e) {}
+        }
+        if (this.audioContext && this.audioContext.state !== 'closed') {
+          try { this.audioContext.close(); } catch (e) {}
+        }
+      }
+
+      setThreshold(normalizedPercent) {
+        this.threshold = Math.max(0.02, Math.min(0.8, normalizedPercent / 100));
+      }
+
+      onActivityChange(callback) {
+        this.listeners.add(callback);
+      }
+
+      _emit(speaking, rms, calibrating = false) {
+        this.listeners.forEach(cb => cb({ isSpeaking: speaking, rms: rms, calibrating: calibrating }));
+      }
+
+      _processAudioLoop() {
+        if (!this.isListening || !this.analyser) return;
+
+        this.analyser.getByteTimeDomainData(this.dataArray);
+
+        // Compute Root Mean Square (RMS) energy
+        let sumSquares = 0;
+        for (let i = 0; i < this.dataArray.length; i++) {
+          const norm = (this.dataArray[i] - 128) / 128;
+          sumSquares += norm * norm;
+        }
+        this.currentRms = Math.sqrt(sumSquares / this.dataArray.length);
+
+        // Brief calibration window: learn the ambient noise floor before we
+        // start judging what counts as "speaking". Nothing is flagged as
+        // speech yet, but the meter/UI still gets live updates.
+        if (this.isCalibrating) {
+          this._calibrationSamples.push(this.currentRms);
+          if (performance.now() - this._calibrationStartedAt >= this._calibrationDurationMs) {
+            // Use a low percentile rather than a plain average: if the user
+            // is already talking during this brief window, a straight
+            // average gets pulled up by their voice and the resulting
+            // "floor" ends up too close to (or above) normal speaking
+            // volume, so real speech afterward never clears the threshold.
+            // The quietest portion of the sample window is a much better
+            // estimate of the actual room noise floor.
+            const sorted = [...this._calibrationSamples].sort((a, b) => a - b);
+            const p25 = sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0];
+            this.noiseFloor = Math.min(0.2, p25);
+            this.isCalibrating = false;
+          }
+          this._emit(false, this.currentRms, true);
+          requestAnimationFrame(() => this._processAudioLoop());
+          return;
+        }
+
+        // Effective threshold = ambient noise floor + a sensitivity margin
+        // driven by the user's slider. This keeps the same slider value
+        // meaningful across very different microphones/rooms, instead of
+        // silently failing to trigger on a quiet mic or firing constantly
+        // on a noisy one. A second, slightly lower threshold is used to
+        // decide when speech has STOPPED (hysteresis), so normal dips in
+        // volume mid-sentence don't cause flickering between states.
+        //
+        // Note: normal conversational speech typically only raises RMS by
+        // roughly 0.02–0.10 above the ambient floor on a laptop/webcam mic,
+        // so the margin has to stay small — a large margin (an earlier
+        // version of this multiplied the raw threshold by 0.6, giving
+        // ~0.1+) effectively required shouting to ever register as speech.
+        const sensitivityMargin = Math.max(0.008, 0.01 + this.threshold * 0.11);
+        const startThreshold = this.noiseFloor + sensitivityMargin;
+        const stopThreshold = this.noiseFloor + sensitivityMargin * 0.55;
+        const aboveThreshold = this.isSpeaking
+          ? this.currentRms > stopThreshold
+          : this.currentRms > startThreshold;
+
+        if (aboveThreshold) {
+          if (this.silenceTimeoutTimer) {
+            clearTimeout(this.silenceTimeoutTimer);
+            this.silenceTimeoutTimer = null;
+          }
+          if (!this.isSpeaking) {
+            this.isSpeaking = true;
+            this._emit(true, this.currentRms);
+          }
+        } else {
+          // Below threshold
+          if (this.isSpeaking && !this.silenceTimeoutTimer) {
+            this.silenceTimeoutTimer = setTimeout(() => {
+              this.isSpeaking = false;
+              this._emit(false, this.currentRms);
+              this.silenceTimeoutTimer = null;
+            }, this.silenceDelayMs);
+          }
+        }
+
+        // Always update meter visualization
+        this._emit(this.isSpeaking, this.currentRms);
+
+        requestAnimationFrame(() => this._processAudioLoop());
+      }
+    }
+
+    /**
+     * Web Speech API Speech Recognition — Improved cumulative transcript version.
+     * Key changes vs. old version:
+     *  - Accumulates final segments across recognition events (_finalAccumulated)
+     *  - Passes the FULL spoken context to the alignment engine each event
+     *  - Proper debounced isSpeaking state (800ms debounce, not 1200ms)
+     *  - Best-alternative selection (picks highest-confidence alternative)
+     */
+    class SpeechSyncRecognition {
+      constructor(language = 'en-US') {
+        this.language = language;
+        this.recognition = null;
+        this.isRecognizing = false;
+        this.isSpeaking = false;
+        this.onTokensMatched = null;
+        this.onSpeechActivity = null;
+        this.onError = null;
+        this._startedAt = 0;
+        this.lastResultAt = 0;
+        this._speakingTimeout = null;
+        // Cumulative final transcript for the current take session
+        this._finalAccumulated = '';
+
+        this.fillerWords = new Set([
+          'um', 'uh', 'ah', 'er', 'erm', 'hmm',
+          'yəni', 'belə', 'yaxşı',
+          'yani', 'falan', 'hıhım',
+          'ну', 'ээ', 'мм', 'типа'
+        ]);
+      }
+
+      initialize() {
+        const SpeechClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechClass) {
+          console.warn('Web Speech API not supported in this browser.');
+          return false;
+        }
+
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        this.recognition = new SpeechClass();
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.maxAlternatives = isMobile ? 1 : 3;
+        this.recognition.lang = this.language;
+
+        const setSpeaking = (val) => {
+          if (this._speakingTimeout) { clearTimeout(this._speakingTimeout); this._speakingTimeout = null; }
+          if (val) {
+            this.isSpeaking = true;
+            if (this.onSpeechActivity) this.onSpeechActivity(true);
+            this._speakingTimeout = setTimeout(() => {
+              this.isSpeaking = false;
+              if (this.onSpeechActivity) this.onSpeechActivity(false);
+              this._speakingTimeout = null;
+            }, 2200);
+          } else {
+            this._speakingTimeout = setTimeout(() => {
+              this.isSpeaking = false;
+              if (this.onSpeechActivity) this.onSpeechActivity(false);
+              this._speakingTimeout = null;
+            }, 1400);
+          }
+        };
+
+        this.recognition.onstart = () => {
+          this.isRecognizing = true;
+          this._startedAt = performance.now();
+        };
+
+        this.recognition.onspeechstart = () => setSpeaking(true);
+        this.recognition.onsoundstart  = () => setSpeaking(true);
+        this.recognition.onspeechend   = () => setSpeaking(false);
+        this.recognition.onsoundend    = () => setSpeaking(false);
+
+        this.recognition.onresult = (event) => {
+          setSpeaking(true);
+          this.lastResultAt = performance.now();
+
+          let interimText = '';
+          let newFinal = '';
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const r = event.results[i];
+            if (!r || !r.length) continue;
+            let best = r[0].transcript || '';
+            for (let a = 1; a < r.length; a++) {
+              if (r[a] && r[a].confidence && r[0].confidence && r[a].confidence > r[0].confidence) {
+                best = r[a].transcript;
+              }
+            }
+            if (r.isFinal) {
+              newFinal += best + ' ';
+            } else {
+              interimText += best;
+            }
+          }
+
+          if (newFinal) this._finalAccumulated += newFinal;
+
+          // Full context = everything confirmed + current interim chunk
+          const fullContext = (this._finalAccumulated + ' ' + interimText).trim();
+
+          if (fullContext) {
+            const pill = document.getElementById('studio-live-transcript');
+            const txt  = document.getElementById('studio-live-transcript-text');
+            if (pill && txt) {
+              txt.textContent = '"' + (interimText || newFinal).trim() + '"';
+              pill.classList.remove('opacity-0');
+              clearTimeout(this._livePillTimer);
+              this._livePillTimer = setTimeout(() => pill.classList.add('opacity-0'), 2500);
+            }
+          }
+
+          if (fullContext && this.onTokensMatched) {
+            const tokens = this.cleanAndTokenize(fullContext);
+            this.onTokensMatched(tokens, !interimText, fullContext);
+          }
+        };
+
+        this.recognition.onerror = (event) => {
+          if (event.error === 'no-speech') return;
+          console.warn('Speech recognition error:', event.error);
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            this.isRecognizing = false;
+          }
+          if (this.onError) this.onError(event.error);
+        };
+
+        this.recognition.onend = () => {
+          if (!this.isRecognizing) return;
+          if (this._restartTimer) clearTimeout(this._restartTimer);
+          const delay = isMobile ? 250 : 120;
+          this._restartTimer = setTimeout(() => {
+            if (!this.isRecognizing) return;
+            try {
+              this.recognition.start();
+              this._restartAttempts = 0;
+            } catch (e) {
+              this._restartAttempts = (this._restartAttempts || 0) + 1;
+              if (this._restartAttempts < 6) {
+                setTimeout(() => {
+                  if (this.isRecognizing) {
+                    try { this.recognition.start(); } catch (e2) {}
+                  }
+                }, 400);
+              }
+            }
+          }, delay);
+        };
+
+        return true;
+      }
+
+      setLanguage(lang) {
+        this.language = lang;
+        if (this.recognition) {
+          this.recognition.lang = lang;
+          if (this.isRecognizing) { this.stop(); this.start(); }
+        }
+      }
+
+      start() {
+        if (!this.recognition) {
+          if (!this.initialize()) return false;
+        }
+        try {
+          this.isRecognizing = true;
+          this._finalAccumulated = '';
+          this.recognition.start();
+          return true;
+        } catch (e) { return false; }
+      }
+
+      stop() {
+        this.isRecognizing = false;
+        if (this._restartTimer) { clearTimeout(this._restartTimer); this._restartTimer = null; }
+        if (this._speakingTimeout) { clearTimeout(this._speakingTimeout); this._speakingTimeout = null; }
+        this.isSpeaking = false;
+        this._finalAccumulated = '';
+        if (this.recognition) try { this.recognition.stop(); } catch (e) {}
+      }
+
+      cleanAndTokenize(rawText) {
+        return rawText
+          .replace(/İ/g, 'i')
+          .replace(/I/g, 'ı')
+          .toLowerCase()
+          .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»'""]/g, ' ')
+          .split(/\s+/)
+          .filter(t => t.length > 0 && !this.fillerWords.has(t));
+      }
+    }
+
+    /**
+     * =========================================================================
+     * 2. SCRIPT-TO-SPEECH SYNCHRONIZATION ENGINE (v2 — Cumulative Alignment)
+     * =========================================================================
+     *
+     * Design principles:
+     *  - processSpeechTokens() receives the FULL cumulative spoken token array
+     *    (from session start) and aligns it against the script using a
+     *    sliding-window fuzzy sequential search.
+     *  - Scrolling is 100% VAD-gated in speech mode:
+     *    SPEAKING → targetScrollTop advances; SILENT → frozen.
+     *  - No stall-assist auto-scroll in speech mode.
+     *  - Smooth lerp with per-frame max-jump cap prevents sudden large jumps.
+     */
+    class TeleprompterSyncEngine {
+      constructor(viewportEl, canvasEl) {
+        this.viewportEl = viewportEl;
+        this.canvasEl = canvasEl;
+
+        this.tokens = [];
+        this.currentIndex = 0;
+        this.mode = 'speech';
+        this.autoSpeedWpm = 140;
+        this.isLive = false;
+        this.targetScrollTop = 0;
+        this.currentScrollTop = 0;
+        this.rafId = null;
+        this.lastFrameTime = performance.now();
+        this.cueAnchorRatio = 0.35;
+
+        // Cumulative alignment tracking
+        this._spokenConsumedCount = 0;
+        this._lastMatchedScriptIndex = 0;
+        this._reachedEnd = false;
+        this.lastMatchTime = performance.now();
+
+        this.onProgressChange = null;
+        this.onScriptComplete = null;
+
+        this._isUserTouching = false;
+        if (this.viewportEl) {
+          this.viewportEl.addEventListener('touchstart', () => { this._isUserTouching = true; }, { passive: true });
+          this.viewportEl.addEventListener('touchend', () => { this._isUserTouching = false; }, { passive: true });
+          this.viewportEl.addEventListener('mousedown', () => { this._isUserTouching = true; }, { passive: true });
+          window.addEventListener('mouseup', () => { this._isUserTouching = false; }, { passive: true });
+          this.viewportEl.addEventListener('scroll', () => {
+            if (this._isUserTouching) {
+              this.currentScrollTop = this.viewportEl.scrollTop;
+              this.targetScrollTop  = this.currentScrollTop;
+              this._advanceIndexFromScroll();
+            }
+          }, { passive: true });
+        }
+      }
+
+      loadScript(scriptText) {
+        this.canvasEl.innerHTML = '';
+        this.tokens = [];
+        this.currentIndex = 0;
+        this._spokenConsumedCount = 0;
+        this._lastMatchedScriptIndex = 0;
+        this._reachedEnd = false;
+        this.targetScrollTop = 0;
+        this.currentScrollTop = 0;
+
+        // Ensure first word starts EXACTLY on the cue focus line
+        const cuePx = Math.max(120, Math.round(this.viewportEl.clientHeight * this.cueAnchorRatio));
+        this.canvasEl.style.paddingTop = `${cuePx}px`;
+        this.canvasEl.style.paddingBottom = `${Math.max(200, Math.round(this.viewportEl.clientHeight * 0.65))}px`;
+
+        if (!scriptText || !scriptText.trim()) {
+          this.canvasEl.innerHTML = '<div class="text-center py-20 text-slate-500 font-mono">Empty Script. Write or import text to start.</div>';
+          return;
+        }
+
+        const paragraphs = scriptText.split(/\n+/);
+        let globalTokenId = 0;
+        let sentenceCount = 0;
+
+        paragraphs.forEach((pText) => {
+          if (!pText.trim()) return;
+          const pEl = document.createElement('p');
+          pEl.className = 'mb-6 leading-relaxed flex flex-wrap gap-x-2.5 gap-y-1';
+
+          pText.trim().split(/\s+/).forEach((word) => {
+            const span = document.createElement('span');
+            span.className = 'token-word';
+            span.textContent = word;
+            span.dataset.tokenId = globalTokenId;
+            const tokenIdx = globalTokenId;
+            span.onclick = () => this.jumpToToken(tokenIdx);
+
+            const cleanWord = word
+              .replace(/\u0130/g, 'i').replace(/I/g, '\u0131')
+              .toLowerCase()
+              .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'\u00AB\u00BB\u2018\u2019\u201C\u201D]/g, '');
+            const normWord = this._foldDiacritics(cleanWord);
+
+            this.tokens.push({ id: tokenIdx, word, cleanWord, normWord, sentenceIndex: sentenceCount, el: span });
+            if (/[.!?]$/.test(word)) sentenceCount++;
+            pEl.appendChild(span);
+            globalTokenId++;
+          });
+
+          this.canvasEl.appendChild(pEl);
+        });
+
+        this.updateWordHighlights();
+        this.jumpToToken(0);
+      }
+
+      jumpToToken(index) {
+        if (!this.tokens.length) return;
+        this.currentIndex = Math.max(0, Math.min(this.tokens.length - 1, index));
+        this._reachedEnd = false;
+        this._spokenConsumedCount = 0;
+        this._lastMatchedScriptIndex = this.currentIndex;
+        this.lastMatchTime = performance.now();
+        this.updateWordHighlights();
+        this.alignViewportToCurrentToken(true);
+      }
+
+      restartScript() { this.jumpToToken(0); }
+
+      alignViewportToCurrentToken(immediate) {
+        const token = this.tokens[this.currentIndex];
+        if (!token || !token.el) return;
+
+        const tokenRect    = token.el.getBoundingClientRect();
+        const viewportRect = this.viewportEl.getBoundingClientRect();
+        const offsetInView  = tokenRect.top - viewportRect.top;
+        const desiredOffset = this.viewportEl.clientHeight * this.cueAnchorRatio;
+        const target = Math.max(0, this.viewportEl.scrollTop + (offsetInView - desiredOffset));
+
+        if (immediate) {
+          this.targetScrollTop  = target;
+          this.currentScrollTop = target;
+          this.viewportEl.scrollTop = target;
+        } else {
+          this.targetScrollTop = target;
+        }
+
+        if (this.onProgressChange) this.onProgressChange(this.currentIndex, this.tokens.length);
+      }
+
+      updateWordHighlights() {
+        for (let i = 0; i < this.tokens.length; i++) {
+          const t = this.tokens[i];
+          if (!t.el) continue;
+          if      (i < this.currentIndex)  t.el.className = 'token-word token-spoken text-slate-400';
+          else if (i === this.currentIndex) t.el.className = 'token-word token-active';
+          else                              t.el.className = 'token-word text-white';
+        }
+      }
+
+      /**
+       * Core alignment. Receives the FULL cumulative spoken token array and
+       * finds the furthest forward-matching position in the script.
+       */
+      processSpeechTokens(allSpokenTokens, isFinal) {
+        if (!this.tokens.length || this.currentIndex >= this.tokens.length - 1) return;
+        if (!allSpokenTokens || !allSpokenTokens.length) return;
+
+        // Take recent spoken words (last 10 words)
+        const recentSpoken = allSpokenTokens.slice(-10);
+        if (!recentSpoken.length) return;
+
+        const SEARCH_WINDOW = 60;
+        const searchStart = this.currentIndex;
+        const searchEnd = Math.min(this.tokens.length - 1, searchStart + SEARCH_WINDOW);
+
+        let bestScriptIdx = -1;
+
+        // Search starting from newest spoken tokens backwards
+        for (let sIdx = recentSpoken.length - 1; sIdx >= 0; sIdx--) {
+          const spokenWord = recentSpoken[sIdx];
+          if (!spokenWord || spokenWord.length < 2) continue;
+
+          for (let tIdx = searchStart; tIdx <= searchEnd; tIdx++) {
+            if (!this._isWordMatch(spokenWord, this.tokens[tIdx].cleanWord)) continue;
+
+            const extLen = this._extendMatch(recentSpoken, sIdx, tIdx);
+            const scriptEndIdx = tIdx + extLen;
+            const isNearCursor = (tIdx <= this.currentIndex + 3);
+            const isDistinctive = spokenWord.length >= 3 || isNearCursor;
+
+            if (!isDistinctive && extLen === 0) continue;
+
+            if (scriptEndIdx > bestScriptIdx) {
+              bestScriptIdx = scriptEndIdx;
+            }
+            break;
+          }
+          if (bestScriptIdx >= 0) break;
+        }
+
+        if (bestScriptIdx >= 0 && bestScriptIdx >= this.currentIndex) {
+          const newIdx = Math.min(this.tokens.length - 1, bestScriptIdx + 1);
+          if (newIdx > this.currentIndex) {
+            this.currentIndex = newIdx;
+            this._lastMatchedScriptIndex = newIdx;
+            this.lastMatchTime = performance.now();
+            this.updateWordHighlights();
+            this.alignViewportToCurrentToken(false);
+            if (this.onProgressChange) this.onProgressChange(this.currentIndex, this.tokens.length);
+            if (this.currentIndex >= this.tokens.length - 1 && !this._reachedEnd) {
+              this._reachedEnd = true;
+              if (this.onScriptComplete) this.onScriptComplete();
+            }
+          }
+        }
+      }
+
+      _extendMatch(spokenTokens, spokenAnchor, scriptAnchor) {
+        let ext = 0, sIdx = spokenAnchor + 1, tIdx = scriptAnchor + 1;
+        while (sIdx < spokenTokens.length && tIdx < this.tokens.length && ext < 8) {
+          if (this._isWordMatch(spokenTokens[sIdx], this.tokens[tIdx].cleanWord)) {
+            ext++; sIdx++; tIdx++;
+          } else if (tIdx + 1 < this.tokens.length && this._isWordMatch(spokenTokens[sIdx], this.tokens[tIdx + 1].cleanWord)) {
+            ext++; sIdx++; tIdx += 2;
+          } else break;
+        }
+        return ext;
+      }
+
+      _foldDiacritics(str) {
+        return str
+          .replace(/\u0259/g, 'e').replace(/\u011F/g, 'g').replace(/\u0131/g, 'i')
+          .replace(/\u00F6/g, 'o').replace(/\u00FC/g, 'u').replace(/\u015F/g, 's')
+          .replace(/\u00E7/g, 'c');
+      }
+
+      normalizeWordForMatch(str) {
+        if (!str) return '';
+        return this._foldDiacritics(
+          str.replace(/\u0130/g, 'i').replace(/I/g, '\u0131')
+             .toLowerCase()
+             .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'\u00AB\u00BB\u2018\u2019\u201C\u201D]/g, '')
+             .trim()
+        );
+      }
+
+      _isWordMatch(spoken, cleanWord) {
+        if (!spoken || !cleanWord) return false;
+        if (spoken === cleanWord) return true;
+        const ns = this.normalizeWordForMatch(spoken);
+        const nc = this.normalizeWordForMatch(cleanWord);
+        if (ns && nc && ns === nc) return true;
+        if (ns.length >= 4 && nc.length >= 4 && (nc.startsWith(ns) || ns.startsWith(nc))) return true;
+        const lenRatio = Math.min(ns.length, nc.length) / Math.max(ns.length || 1, nc.length || 1);
+        if (lenRatio < 0.5) return false;
+        return Math.max(this._levenshteinSimilarity(spoken, cleanWord), this._levenshteinSimilarity(ns, nc)) >= 0.72;
+      }
+
+      _levenshteinSimilarity(s1, s2) {
+        if (s1 === s2) return 1.0;
+        if (!s1 || !s2) return 0.0;
+        const m = s1.length, n = s2.length;
+        let prev = Array.from({ length: n + 1 }, (_, i) => i);
+        let curr = new Array(n + 1);
+        for (let i = 1; i <= m; i++) {
+          curr[0] = i;
+          for (let j = 1; j <= n; j++) {
+            curr[j] = s1[i-1] === s2[j-1] ? prev[j-1] : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
+          }
+          [prev, curr] = [curr, prev];
+        }
+        return 1.0 - prev[n] / Math.max(m, n);
+      }
+
+      calculateSimilarity(s1, s2) { return this._levenshteinSimilarity(s1, s2); }
+
+      startLoop() {
+        this.isLive = true;
+        this.lastFrameTime = performance.now();
+        this._renderLoop();
+      }
+
+      stopLoop() {
+        this.isLive = false;
+        if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+      }
+
+      _renderLoop() {
+        if (!this.isLive) return;
+        const now = performance.now();
+        const delta = (now - this.lastFrameTime) / 1000;
+        this.lastFrameTime = now;
+
+        const vadSpeaking = !!(
+          (window.app && app.vadEngine   && app.vadEngine.isSpeaking) ||
+          (window.app && app.speechService && app.speechService.isSpeaking)
+        );
+
+        if (this.mode === 'auto') {
+          this._doAutoScroll(delta);
+        } else if (this.mode === 'hybrid' || this.mode === 'speech') {
+          // Voice-activated: scroll smoothly while speaking; speech tokens continuously snap to exact word
+          if (vadSpeaking) {
+            this._doAutoScroll(delta);
+          }
+          // When silent: stay paused/hold position
+        }
+
+        const diff = this.targetScrollTop - this.currentScrollTop;
+        if (Math.abs(diff) > 0.1) {
+          this.currentScrollTop += Math.sign(diff) * Math.max(0.4, Math.abs(diff) * 0.15);
+          if (Math.abs(this.targetScrollTop - this.currentScrollTop) < 0.5) {
+            this.currentScrollTop = this.targetScrollTop;
+          }
+          this.viewportEl.scrollTop = Math.round(this.currentScrollTop);
+        }
+
+        this.rafId = requestAnimationFrame(() => this._renderLoop());
+      }
+
+      _doAutoScroll(delta) {
+        const pixPerSec = this.autoSpeedWpm * 1.8;
+        const maxScroll = Math.max(0, this.viewportEl.scrollHeight - this.viewportEl.clientHeight);
+        if (this.targetScrollTop < maxScroll) {
+          this.targetScrollTop = Math.min(maxScroll, this.targetScrollTop + pixPerSec * delta);
+          this._advanceIndexFromScroll();
+        } else if (!this._reachedEnd) {
+          this._reachedEnd = true;
+          this.currentIndex = this.tokens.length - 1;
+          this.updateWordHighlights();
+          if (this.onScriptComplete) this.onScriptComplete();
+        }
+      }
+
+      _advanceIndexFromScroll() {
+        const cueY = this.viewportEl.clientHeight * this.cueAnchorRatio;
+        const vTop = this.viewportEl.getBoundingClientRect().top;
+        while (this.currentIndex < this.tokens.length - 1) {
+          const next = this.tokens[this.currentIndex + 1];
+          if (!next || !next.el) break;
+          if (next.el.getBoundingClientRect().top - vTop <= cueY + 20) {
+            this.currentIndex++;
+            this._reachedEnd = false;
+            this.updateWordHighlights();
+            if (this.onProgressChange) this.onProgressChange(this.currentIndex, this.tokens.length);
+          } else break;
+        }
+      }
+
+    }
+
+    /**
+     * =========================================================================
+     * 3. CAMERA LIVE PREVIEW & VIDEO RECORDING MODULE
+     * =========================================================================
+     */
+    class CameraRecordingService {
+      constructor(videoElement) {
+        this.videoEl = videoElement;
+        this.mediaStream = null;
+        this.mediaRecorder = null;
+        this.recordedChunks = [];
+        this.isRecording = false;
+        this.activeDeviceId = null;
+        this.startTime = 0;
+        this.timerInterval = null;
+        this.onTimerUpdate = null;
+        this.latestBlob = null;
+      }
+
+      async startPreview(preferredDeviceId = null) {
+        try {
+          if (this.mediaStream) {
+            this.mediaStream.getTracks().forEach(t => t.stop());
+          }
+
+          const constraints = {
+            video: preferredDeviceId 
+              ? { deviceId: { exact: preferredDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+              : { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
+            // Camera preview must not lock microphone hardware from Web Speech API on mobile
+            audio: false
+          };
+
+          this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.videoEl.srcObject = this.mediaStream;
+          this.activeDeviceId = preferredDeviceId;
+          return this.mediaStream;
+        } catch (err) {
+          console.warn("Unable to acquire camera preview:", err);
+          return null;
+        }
+      }
+
+      stopPreview() {
+        if (this.mediaStream) {
+          this.mediaStream.getTracks().forEach(t => t.stop());
+          this.mediaStream = null;
+        }
+        this.videoEl.srcObject = null;
+      }
+
+      async startRecording() {
+        if (!this.mediaStream) return false;
+
+        // If recording video needs microphone audio, add audio track on-demand
+        if (this.mediaStream.getAudioTracks().length === 0) {
+          try {
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioStream.getAudioTracks().forEach(track => this.mediaStream.addTrack(track));
+          } catch (e) {
+            console.warn("Recording video without microphone track:", e);
+          }
+        }
+
+        this.recordedChunks = [];
+
+        const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          delete options.mimeType; // fallback to browser default
+        }
+
+        try {
+          this.mediaRecorder = new MediaRecorder(this.mediaStream, options);
+          this.mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              this.recordedChunks.push(event.data);
+            }
+          };
+
+          this.mediaRecorder.onstop = () => {
+            this.latestBlob = new Blob(this.recordedChunks, { type: 'video/webm' });
+          };
+
+          this.mediaRecorder.start(1000); // 1-second chunks
+          this.isRecording = true;
+          this.startTime = Date.now();
+
+          this.timerInterval = setInterval(() => {
+            const elapsedSeconds = Math.floor((Date.now() - this.startTime) / 1000);
+            if (this.onTimerUpdate) this.onTimerUpdate(elapsedSeconds);
+          }, 1000);
+
+          return true;
+        } catch (err) {
+          console.error("Recording initiation failed:", err);
+          return false;
+        }
+      }
+
+      stopRecording() {
+        return new Promise((resolve) => {
+          if (!this.mediaRecorder || !this.isRecording) {
+            resolve(null);
+            return;
+          }
+
+          clearInterval(this.timerInterval);
+          this.isRecording = false;
+
+          this.mediaRecorder.onstop = () => {
+            this.latestBlob = new Blob(this.recordedChunks, { type: 'video/webm' });
+            resolve(this.latestBlob);
+          };
+
+          this.mediaRecorder.stop();
+        });
+      }
+
+      async enumerateCameras() {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          return devices.filter(d => d.kind === 'videoinput');
+        } catch (e) {
+          return [];
+        }
+      }
+    }
+
+    /**
+     * =========================================================================
+     * 4. MAIN TELEPROMPTER APPLICATION COORDINATOR & STORAGE
+     * =========================================================================
+     */
+    class TeleprompterApp {
+      constructor() {
+        // Core State
+        this.currentRoute = 'dashboard';
+        this.scripts = [];
+        this.activeScriptId = null;
+        this.recordings = [];
+        
+        // Settings State
+        this.settings = {
+          scrollSpeedWpm: 140,
+          vadThreshold: 18,
+          speechLanguage: 'tr-TR',
+          fontSize: 48,
+          fontFamily: 'Inter, sans-serif',
+          lineHeight: '1.7',
+          textAlign: 'left',
+          textColor: '#ffffff',
+          cueColor: '#38bdf8',
+          cameraEnabled: true,
+          cameraOpacity: 65,
+          shroudOpacity: 80,
+          mirrorHorizontal: false,
+          mirrorVertical: false,
+          mode: 'hybrid' // 'speech' | 'auto' | 'hybrid'
+        };
+
+        // Subsystems
+        this.vadEngine = new AudioVADEngine();
+        this.speechService = new SpeechSyncRecognition(this.settings.speechLanguage);
+        this.prompterEngine = null;
+        this.cameraService = null;
+
+        this.init();
+      }
+
+      async init() {
+        this.loadLocalData();
+
+        // Elements
+        const viewport = document.getElementById('prompter-scroll-viewport');
+        const canvas = document.getElementById('prompter-content-canvas');
+        const webcamVideo = document.getElementById('webcam-video');
+
+        this.prompterEngine = new TeleprompterSyncEngine(viewport, canvas);
+        this.cameraService = new CameraRecordingService(webcamVideo);
+
+        // Bind Subsystem Callbacks
+        this.bindEvents();
+        this.applySettingsToUI();
+        this.renderDashboard();
+        this.setRoute('dashboard');
+        this.checkHttps();
+
+        lucide.createIcons();
+      }
+
+      checkHttps() {
+        const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
+        if (!isSecure) {
+          const banner = document.createElement('div');
+          banner.className = 'bg-amber-600 text-white px-4 py-3 text-xs font-medium flex items-center justify-between z-50 sticky top-0 shadow-xl';
+          banner.innerHTML = `
+            <div class="flex items-center gap-2 max-w-4xl">
+              <i data-lucide="shield-alert" class="w-5 h-5 shrink-0 text-white"></i>
+              <span><strong>DİQQƏT / HTTPS Tələb Olunur:</strong> Sayt <code>http://</code> üzərindədir. Mobil telefonlarda (Android) və digər cihazlarda brauzerlər mikrofon və nitq tanıma icazəsini <strong>yalnız HTTPS (SSL)</strong> olduqda verir. Hostinginizdə SSL aktivləşdirib <code>https://</code> ilə daxil olun.</span>
+            </div>
+            <button onclick="this.parentElement.remove()" class="px-2 py-1 bg-amber-700 hover:bg-amber-800 rounded text-white ml-3 shrink-0 text-[11px] font-bold">Bağla</button>
+          `;
+          document.body.prepend(banner);
+        }
+      }
+
+      loadLocalData() {
+        let hasSavedSettings = false;
+
+        // Try restoring persisted state first (real persistence, not a demo reset)
+        try {
+          const savedScripts = localStorage.getItem('telesync.scripts');
+          const savedActiveId = localStorage.getItem('telesync.activeScriptId');
+          const savedSettings = localStorage.getItem('telesync.settings');
+
+          if (savedScripts) {
+            const parsed = JSON.parse(savedScripts);
+            if (Array.isArray(parsed) && parsed.length) {
+              this.scripts = parsed;
+              this.activeScriptId = savedActiveId && parsed.some(s => s.id === savedActiveId)
+                ? savedActiveId
+                : parsed[0].id;
+            }
+          }
+
+          if (savedSettings) {
+            hasSavedSettings = true;
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.speechLanguage === 'en-US' && (navigator.language || '').match(/^tr|^az/i)) {
+              parsedSettings.speechLanguage = (navigator.language || '').toLowerCase().startsWith('az') ? 'az-AZ' : 'tr-TR';
+            }
+            this.settings = { ...this.settings, ...parsedSettings };
+            this.speechService.setLanguage(this.settings.speechLanguage);
+          }
+        } catch (e) {
+          console.warn('Failed to restore persisted state, falling back to defaults:', e);
+        }
+
+        // On a brand-new install (nothing saved yet), match the speech
+        // recognition language to the browser's language instead of always
+        // silently defaulting to en-US.
+        if (!hasSavedSettings) {
+          this.settings.speechLanguage = this.detectDefaultSpeechLanguage();
+          this.speechService.setLanguage(this.settings.speechLanguage);
+        }
+
+        // First-ever load (nothing in storage yet): seed with demo scripts
+        if (!this.scripts.length) {
+          this.scripts = [
+            {
+              id: 'script-1',
+              title: 'Studio Broadcast Keynote Announcement',
+              content: `Good evening and welcome to tonight's live broadcast.
+We are presenting a groundbreaking innovation in teleprompter engineering.
+Notice how the script stays perfectly anchored as you pause to take a breath.
+When you proceed to the next paragraph, the text smoothly scrolls forward into your focal eye line.
+This eliminates frantic pacing, unnatural reading cadences, and memorization anxiety.
+Thank you for joining our keynote demonstration today.`,
+              updatedAt: new Date().toISOString()
+            },
+            {
+              id: 'script-2',
+              title: 'Product Review & Tech Deep-Dive',
+              content: `Hello creators! Today we are testing high-framerate camera recording paired with voice-guided cues.
+The built-in microphone listener continuously separates spoken speech from room resonance.
+Whether you glance away or skip a word, the intelligent matching algorithm recovers your position seamlessly.
+Make sure to subscribe, leave a comment below, and enjoy crystal-clear reading on camera.`,
+              updatedAt: new Date().toISOString()
+            }
+          ];
+          this.activeScriptId = this.scripts[0].id;
+        }
+      }
+
+      /**
+       * Picks the best supported speech-recognition locale for a fresh
+       * install by matching the browser's own language preferences against
+       * the languages offered in the settings drawer.
+       */
+      detectDefaultSpeechLanguage() {
+        const supported = ['az-AZ', 'tr-TR', 'en-US', 'en-GB', 'ru-RU', 'es-ES', 'de-DE', 'fr-FR'];
+        const browserLangs = (navigator.languages && navigator.languages.length)
+          ? navigator.languages
+          : [navigator.language || 'az-AZ'];
+
+        for (const lang of browserLangs) {
+          if (!lang) continue;
+          const exact = supported.find(s => s.toLowerCase() === lang.toLowerCase());
+          if (exact) return exact;
+
+          const base = lang.split('-')[0].toLowerCase();
+          const baseMatch = supported.find(s => s.toLowerCase().startsWith(base + '-'));
+          if (baseMatch) return baseMatch;
+        }
+        return 'az-AZ';
+      }
+
+      /**
+       * Persist scripts + active script id to localStorage.
+       * Recordings are intentionally NOT persisted: Blobs cannot survive
+       * JSON serialization / localStorage, and storing large video data
+       * client-side would blow past storage quotas.
+       */
+      persistScripts() {
+        try {
+          localStorage.setItem('telesync.scripts', JSON.stringify(this.scripts));
+          localStorage.setItem('telesync.activeScriptId', this.activeScriptId || '');
+        } catch (e) {
+          console.warn('Failed to persist scripts:', e);
+          this.showToast('Could not save changes locally (storage full or disabled).');
+        }
+      }
+
+      persistSettings() {
+        try {
+          localStorage.setItem('telesync.settings', JSON.stringify(this.settings));
+        } catch (e) {
+          console.warn('Failed to persist settings:', e);
+        }
+      }
+
+      /**
+       * Escape user-provided text before it is interpolated into innerHTML,
+       * preventing stored-XSS via script titles/content or recording labels.
+       */
+      escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = String(str ?? '');
+        return div.innerHTML;
+      }
+
+      bindEvents() {
+        // Keyboard Hotkeys
+        window.addEventListener('keydown', (e) => {
+          if (this.currentRoute === 'studio') {
+            if (e.code === 'Space') {
+              e.preventDefault();
+              this.togglePrompterState();
+            } else if (e.code === 'Escape') {
+              this.exitStudio();
+            } else if (e.code === 'KeyR' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              this.toggleRecording();
+            }
+          }
+        });
+
+        // Speech recognition token listener
+        this.speechService.onTokensMatched = (cleanTokens, isFinal) => {
+          if (this.currentRoute === 'studio' && this.prompterEngine.isLive) {
+            this.prompterEngine.processSpeechTokens(cleanTokens, isFinal);
+          }
+        };
+
+        this.speechService.onError = (errorCode) => {
+          if (errorCode === 'restart-limit-exceeded') {
+            this.showToast('Speech recognition lost connection. Switch to Auto Speed or restart the take.');
+          } else if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+            this.showToast('Microphone permission for speech recognition was denied.');
+          } else if (errorCode === 'network') {
+            // The Web Speech API sends audio to a cloud recognizer, so this
+            // fires with no internet connection or a blocked/unreliable
+            // connection — the mic itself keeps working fine (VAD/VU still
+            // shows activity), which is exactly why this failure otherwise
+            // looks like "it hears me but never moves the text".
+            this.showToast('Speech recognition needs an internet connection. Check your connection or switch to Auto Speed.');
+          } else if (errorCode === 'language-not-supported') {
+            this.showToast('Selected speech language is not supported on this device. Try a different language.');
+          } else if (errorCode === 'audio-capture') {
+            this.showToast('No audio is reaching speech recognition from the microphone. Try a different mic or Auto Speed.');
+          } else if (errorCode === 'stalled-no-results') {
+            this.showToast('Mic is picking up sound, but nothing is being recognized. Check your internet connection and speech language.');
+          } else {
+            // Any other/unrecognized error code: still tell the user
+            // something happened instead of failing invisibly, and include
+            // the raw code so it can be reported/diagnosed precisely.
+            this.showToast(`Speech recognition error: ${errorCode}`);
+          }
+        };
+
+        // Speech Recognition Activity Listener (provides voice feedback on mobile without needing AudioContext)
+        this.speechService.onSpeechActivity = (speaking) => {
+          // If vadEngine is running and has active sourceNode, let vadEngine handle meter
+          if (this.vadEngine && this.vadEngine.isListening && this.vadEngine.sourceNode) return;
+
+          const vuBar = document.getElementById('mic-vu-bar');
+          const stateLabel = document.getElementById('speech-state-label');
+          const studioDot = document.getElementById('studio-vad-dot');
+          const studioText = document.getElementById('studio-vad-text');
+
+          if (speaking) {
+            if (vuBar) vuBar.style.width = '75%';
+            if (stateLabel) stateLabel.textContent = 'TALKING';
+            if (studioDot) studioDot.className = 'w-2 h-2 rounded-full bg-cue-emerald shadow-[0_0_8px_#10b981]';
+            if (studioText) studioText.textContent = 'SPEECH ACTIVE';
+          } else {
+            if (vuBar) vuBar.style.width = '10%';
+            if (stateLabel) stateLabel.textContent = 'LISTENING';
+            if (studioDot) studioDot.className = 'w-2 h-2 rounded-full bg-slate-500';
+            if (studioText) studioText.textContent = 'SILENCE HOLD';
+          }
+        };
+
+        // VAD Audio Meter Listener
+        this.vadEngine.onActivityChange(({ isSpeaking, rms, calibrating }) => {
+          const vuBar = document.getElementById('mic-vu-bar');
+          const stateLabel = document.getElementById('speech-state-label');
+          const studioDot = document.getElementById('studio-vad-dot');
+          const studioText = document.getElementById('studio-vad-text');
+
+          const percent = Math.min(100, Math.round(rms * 250));
+          if (vuBar) vuBar.style.width = `${percent}%`;
+
+          if (calibrating) {
+            if (stateLabel) stateLabel.textContent = 'CALIBRATING';
+            if (studioDot) studioDot.className = 'w-2 h-2 rounded-full bg-cue-amber animate-pulse';
+            if (studioText) studioText.textContent = 'READING ROOM NOISE';
+          } else if (isSpeaking) {
+            if (stateLabel) stateLabel.textContent = 'TALKING';
+            if (studioDot) studioDot.className = 'w-2 h-2 rounded-full bg-cue-emerald shadow-[0_0_8px_#10b981]';
+            if (studioText) studioText.textContent = 'SPEECH ACTIVE';
+          } else {
+            if (stateLabel) stateLabel.textContent = 'PAUSED';
+            if (studioDot) studioDot.className = 'w-2 h-2 rounded-full bg-slate-500';
+            if (studioText) studioText.textContent = 'SILENCE HOLD';
+          }
+        });
+
+        // Notify when auto/hybrid scrolling reaches the end of the script
+        this.prompterEngine.onScriptComplete = () => {
+          this.showToast('End of script reached.');
+        };
+
+        // Prompter Progress Listener
+        this.prompterEngine.onProgressChange = (curr, total) => {
+          const pct = total > 0 ? Math.round((curr / total) * 100) : 0;
+          const bar = document.getElementById('studio-script-progress-bar');
+          const label = document.getElementById('studio-progress-label');
+          const wordStat = document.getElementById('studio-word-stat');
+
+          if (bar) bar.style.width = `${pct}%`;
+          if (label) label.textContent = `${pct}%`;
+          if (wordStat) wordStat.textContent = `${curr} / ${total} words`;
+        };
+
+        // Camera Recording Timer
+        this.cameraService.onTimerUpdate = (seconds) => {
+          const mins = String(Math.floor(seconds / 60)).padStart(2, '0');
+          const secs = String(seconds % 60).padStart(2, '0');
+          const timerEl = document.getElementById('studio-record-timer');
+          if (timerEl) timerEl.textContent = `${mins}:${secs}`;
+        };
+
+        // Script Editor Auto-Save & Word Count
+        const editorTextarea = document.getElementById('editor-content-textarea');
+        const editorTitle = document.getElementById('editor-title-input');
+
+        const handleEditorChange = () => {
+          this.updateEditorStats();
+          const script = this.scripts.find(s => s.id === this.activeScriptId);
+          if (script) {
+            script.content = editorTextarea.value;
+            script.title = editorTitle.value || 'Untitled Script';
+            script.updatedAt = new Date().toISOString();
+            this.persistScripts();
+
+            const indicator = document.getElementById('editor-autosave-indicator');
+            if (indicator) {
+              indicator.textContent = 'Saved just now';
+              clearTimeout(this._autosaveIndicatorTimer);
+              this._autosaveIndicatorTimer = setTimeout(() => { indicator.textContent = 'Auto-saved'; }, 2000);
+            }
+          }
+        };
+
+        editorTextarea.addEventListener('input', handleEditorChange);
+        editorTitle.addEventListener('input', handleEditorChange);
+      }
+
+      setRoute(routeName) {
+        this.currentRoute = routeName;
+        document.querySelectorAll('.route-view').forEach(el => el.classList.add('hidden'));
+
+        const target = document.getElementById(`route-${routeName}`);
+        if (target) target.classList.remove('hidden');
+
+        // Update top nav active styling
+        ['dashboard', 'editor', 'recordings'].forEach(r => {
+          const btn = document.getElementById(`nav-${r}`);
+          if (btn) {
+            if (r === routeName) {
+              btn.className = 'px-3 py-1 rounded-md text-xs font-medium text-white bg-brand-600 shadow transition-all';
+            } else {
+              btn.className = 'px-3 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-white transition-all';
+            }
+          }
+        });
+
+        if (routeName === 'dashboard') {
+          this.renderDashboard();
+        } else if (routeName === 'editor') {
+          this.populateEditor();
+        } else if (routeName === 'recordings') {
+          this.renderRecordings();
+        }
+
+        lucide.createIcons();
+      }
+
+      renderDashboard() {
+        const list = document.getElementById('dashboard-scripts-list');
+        list.innerHTML = '';
+
+        document.getElementById('stat-scripts-count').textContent = this.scripts.length;
+        document.getElementById('stat-recordings-count').textContent = this.recordings.length;
+        document.getElementById('stat-active-lang').textContent = this.settings.speechLanguage;
+        document.getElementById('stat-sync-mode').textContent = 
+          this.settings.mode === 'speech' ? 'Speech-Tracked' : (this.settings.mode === 'auto' ? 'Auto Speed' : 'Hybrid');
+
+        this.scripts.forEach(script => {
+          const wordCount = script.content.trim() ? script.content.trim().split(/\s+/).length : 0;
+          const mins = Math.max(1, Math.round(wordCount / 130));
+
+          const card = document.createElement('div');
+          card.className = 'p-5 rounded-xl bg-studio-900/90 border border-studio-800 hover:border-brand-500/50 transition-all flex flex-col justify-between group';
+          card.innerHTML = `
+            <div>
+              <div class="flex items-start justify-between gap-2 mb-2">
+                <h3 class="text-sm font-bold text-white group-hover:text-brand-400 transition-colors line-clamp-1">${this.escapeHtml(script.title)}</h3>
+                <div class="flex items-center gap-1">
+                  <button onclick="app.deleteScript('${script.id}', event)" class="text-slate-500 hover:text-red-400 p-1 rounded" title="Delete Script">
+                    <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+              </div>
+              <p class="text-xs text-slate-400 line-clamp-3 mb-4 leading-relaxed">${this.escapeHtml(script.content)}</p>
+            </div>
+            <div class="flex items-center justify-between pt-3 border-t border-studio-800 text-[11px] font-mono text-slate-500">
+              <span>${wordCount} words • ~${mins} min</span>
+              <button onclick="app.selectScriptAndLaunch('${script.id}')" class="px-2.5 py-1 rounded-md bg-brand-600/20 text-brand-400 border border-brand-500/30 font-sans font-semibold hover:bg-brand-600 hover:text-white transition-all flex items-center gap-1">
+                <i data-lucide="play" class="w-3 h-3"></i> Run
+              </button>
+            </div>
+          `;
+          card.onclick = (e) => {
+            if (e.target.closest('button')) return;
+            this.activeScriptId = script.id;
+            this.setRoute('editor');
+          };
+          list.appendChild(card);
+        });
+      }
+
+      selectScriptAndLaunch(scriptId) {
+        this.activeScriptId = scriptId;
+        this.launchStudio();
+      }
+
+      createNewScript() {
+        const newScript = {
+          id: `script-${Date.now()}`,
+          title: 'New Broadcast Take',
+          content: '',
+          updatedAt: new Date().toISOString()
+        };
+        this.scripts.unshift(newScript);
+        this.activeScriptId = newScript.id;
+        this.persistScripts();
+        this.setRoute('editor');
+        this.showToast('New script created');
+      }
+
+      deleteScript(scriptId, event) {
+        event.stopPropagation();
+        this.scripts = this.scripts.filter(s => s.id !== scriptId);
+        if (this.activeScriptId === scriptId) {
+          this.activeScriptId = this.scripts[0] ? this.scripts[0].id : null;
+        }
+        this.persistScripts();
+        this.renderDashboard();
+        this.showToast('Script deleted');
+      }
+
+      populateEditor() {
+        const script = this.scripts.find(s => s.id === this.activeScriptId) || this.scripts[0];
+        const titleInput = document.getElementById('editor-title-input');
+        const contentTextarea = document.getElementById('editor-content-textarea');
+
+        if (!script) {
+          // No scripts left to edit — clear stale content instead of leaving
+          // the previous script's text behind.
+          this.activeScriptId = null;
+          titleInput.value = '';
+          contentTextarea.value = '';
+          this.updateEditorStats();
+          return;
+        }
+
+        this.activeScriptId = script.id;
+        titleInput.value = script.title;
+        contentTextarea.value = script.content;
+        this.updateEditorStats();
+      }
+
+      updateEditorStats() {
+        const content = document.getElementById('editor-content-textarea').value;
+        const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+        const chars = content.length;
+        const estSeconds = Math.round((words / 130) * 60);
+        const mins = Math.floor(estSeconds / 60);
+        const secs = estSeconds % 60;
+
+        document.getElementById('editor-word-count').textContent = words;
+        document.getElementById('editor-char-count').textContent = chars;
+        document.getElementById('editor-duration-est').textContent = `${mins}m ${String(secs).padStart(2, '0')}s`;
+      }
+
+      handleFileImport(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const text = e.target.result;
+          const imported = {
+            id: `script-${Date.now()}`,
+            title: file.name.replace(/\.[^/.]+$/, ""),
+            content: text,
+            updatedAt: new Date().toISOString()
+          };
+          this.scripts.unshift(imported);
+          this.activeScriptId = imported.id;
+          this.persistScripts();
+          this.setRoute('editor');
+          this.showToast(`Imported ${file.name}`);
+        };
+        reader.onerror = () => {
+          this.showToast(`Failed to read ${file.name}`);
+        };
+        reader.readAsText(file);
+
+        // Reset the input so importing the same file again still fires 'change'
+        event.target.value = '';
+      }
+
+      exportCurrentScript() {
+        const script = this.scripts.find(s => s.id === this.activeScriptId);
+        if (!script) return;
+
+        const blob = new Blob([script.content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${script.title.replace(/\s+/g, '_')}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        this.showToast('Script exported');
+      }
+
+      async launchStudio() {
+        const script = this.scripts.find(s => s.id === this.activeScriptId) || this.scripts[0];
+        if (!script) {
+          this.showToast('Please create a script first.');
+          return;
+        }
+
+        document.getElementById('studio-script-title').textContent = script.title;
+        this.setRoute('studio');
+
+        // Load script tokens
+        this.prompterEngine.loadScript(script.content);
+        this.prompterEngine.mode = this.settings.mode;
+        this.prompterEngine.autoSpeedWpm = this.settings.scrollSpeedWpm;
+        this.setPrompterMode(this.settings.mode);
+        this.applyMirrorStateToUI();
+
+        // HTTPS check for mobile speech recognition
+        const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if (!isSecure) {
+          this.showToast('DİKKAT: Mobil cihazlarda ses tanıma için HTTPS (SSL) gereklidir!');
+        }
+
+        // Auto-detect Turkish/Azerbaijani chars in script to assist language accuracy
+        if (/[əƏ]/.test(script.content) && this.settings.speechLanguage !== 'az-AZ') {
+          this.updateSetting('speechLanguage', 'az-AZ');
+        } else if (/[ğĞıİşŞ]/.test(script.content) && !['tr-TR', 'az-AZ'].includes(this.settings.speechLanguage)) {
+          this.updateSetting('speechLanguage', 'tr-TR');
+        }
+
+        // 1. Start Speech recognition IMMEDIATELY within the direct user click gesture
+        this.speechService.setLanguage(this.settings.speechLanguage);
+        const speechOk = this.speechService.start();
+        if (!speechOk) {
+          this.showToast('Tarayıcınız ses tanımayı desteklemiyor. Android Chrome kullanın veya Auto moda geçin.');
+        }
+
+        // 2. Start VAD Engine to actively measure voice volume from the microphone
+        try {
+          await this.vadEngine.start();
+        } catch(e) {
+          console.warn('VAD startup notice:', e);
+        }
+
+        // 3. Start live camera preview if enabled (video only, zero microphone interference)
+        if (this.settings.cameraEnabled) {
+          try {
+            const cameraStream = await this.cameraService.startPreview();
+            if (!cameraStream) {
+              this.showToast('Camera unavailable — continuing with teleprompter.');
+            }
+          } catch(e) {
+            console.warn('Camera preview notice:', e);
+          }
+        }
+
+        // Populate available video cameras
+        try {
+          const cameras = await this.cameraService.enumerateCameras();
+          const camSelect = document.getElementById('select-camera-device');
+          if (camSelect) {
+            camSelect.innerHTML = '<option value="">Default Camera</option>';
+            cameras.forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c.deviceId;
+              opt.textContent = c.label || `Camera ${camSelect.options.length}`;
+              camSelect.appendChild(opt);
+            });
+          }
+        } catch(e) {}
+
+        // Watchdog: detect if speech is active but no results arrive
+        this._stalledSpeechWarnedAt = 0;
+        this._speechWatchdogId = setInterval(() => {
+          if (this.currentRoute !== 'studio' || !this.prompterEngine.isLive) return;
+          if (this.settings.mode === 'auto') return;
+          const isUserTalking = (this.speechService && this.speechService.isSpeaking) || (this.vadEngine && this.vadEngine.isSpeaking);
+          if (!isUserTalking || !this.speechService.isRecognizing) return;
+
+          const now = performance.now();
+          const sinceLastResult = now - (this.speechService.lastResultAt || 0);
+          const speechStartedAt = this.speechService._startedAt || 0;
+          const sinceRecognitionStarted = now - speechStartedAt;
+
+          if (sinceRecognitionStarted > 5000 && sinceLastResult > 5000 && (now - this._stalledSpeechWarnedAt) > 15000) {
+            this._stalledSpeechWarnedAt = now;
+            if (this.speechService.onError) this.speechService.onError('stalled-no-results');
+          }
+        }, 1000);
+
+        // Start Prompter rendering loop
+        this.prompterEngine.startLoop();
+      }
+
+      exitStudio() {
+        if (this.cameraService.isRecording) {
+          this.cameraService.stopRecording();
+        }
+        if (this._speechWatchdogId) {
+          clearInterval(this._speechWatchdogId);
+          this._speechWatchdogId = null;
+        }
+        this.cameraService.stopPreview();
+        this.prompterEngine.stopLoop();
+        this.speechService.stop();
+        this.vadEngine.stop();
+
+        this.setRoute('dashboard');
+      }
+
+      togglePrompterState() {
+        const playIcon = document.getElementById('studio-play-icon');
+        const playLabel = document.getElementById('studio-play-label');
+
+        if (this.prompterEngine.isLive) {
+          this.prompterEngine.isLive = false;
+          this.speechService.stop();
+          if (playIcon) playIcon.setAttribute('data-lucide', 'pause');
+          if (playLabel) playLabel.textContent = 'Paused';
+        } else {
+          // Reset spoken-token consumed count so the fresh recognition session
+          // aligns from the current script cursor position rather than using
+          // the stale count from the previous session.
+          this.prompterEngine._spokenConsumedCount = 0;
+          this.prompterEngine.startLoop();
+          this.speechService.start(); // also resets _finalAccumulated
+          if (playIcon) playIcon.setAttribute('data-lucide', 'mic');
+          if (playLabel) playLabel.textContent = 'Listening';
+        }
+        lucide.createIcons();
+      }
+
+      async toggleRecording() {
+        const btn = document.getElementById('studio-btn-record');
+        const badge = document.getElementById('studio-recording-badge');
+        const btnText = document.getElementById('studio-record-btn-text');
+
+        if (!this.cameraService.isRecording) {
+          // Start Recording
+          const ok = this.cameraService.startRecording();
+          if (ok) {
+            badge.classList.remove('hidden');
+            badge.classList.add('flex');
+            btn.className = 'px-3.5 py-2 bg-record-600 hover:bg-record-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-record-600/30';
+            btnText.textContent = 'Stop Recording';
+            this.showToast('Recording started');
+          } else {
+            this.showToast('Camera is not ready to record.');
+          }
+        } else {
+          // Stop Recording
+          const videoBlob = await this.cameraService.stopRecording();
+          badge.classList.add('hidden');
+          badge.classList.remove('flex');
+          btn.className = 'px-3.5 py-2 bg-studio-800 hover:bg-studio-700 text-record-500 hover:text-record-400 border border-white/10 rounded-xl text-xs font-bold flex items-center gap-2 transition-all';
+          btnText.textContent = 'Record Take';
+
+          if (videoBlob) {
+            const videoUrl = URL.createObjectURL(videoBlob);
+            const recordingItem = {
+              id: `rec-${Date.now()}`,
+              scriptTitle: document.getElementById('studio-script-title').textContent,
+              blob: videoBlob,
+              url: videoUrl,
+              createdAt: new Date().toLocaleTimeString(),
+              size: `${(videoBlob.size / (1024 * 1024)).toFixed(1)} MB`
+            };
+            this.recordings.unshift(recordingItem);
+            this.showPreviewModal(recordingItem);
+          }
+        }
+      }
+
+      showPreviewModal(recordingItem) {
+        const modal = document.getElementById('video-preview-modal');
+        const video = document.getElementById('playback-video-preview');
+        const dlBtn = document.getElementById('btn-download-recording');
+        const meta = document.getElementById('preview-modal-meta');
+
+        video.src = recordingItem.url;
+        dlBtn.href = recordingItem.url;
+        dlBtn.download = `${recordingItem.scriptTitle.replace(/\s+/g, '_')}_Take.webm`;
+        meta.textContent = `${recordingItem.scriptTitle} • ${recordingItem.createdAt} • ${recordingItem.size}`;
+
+        modal.classList.remove('hidden');
+      }
+
+      closePreviewModal() {
+        const modal = document.getElementById('video-preview-modal');
+        const video = document.getElementById('playback-video-preview');
+        video.pause();
+        video.src = '';
+        modal.classList.add('hidden');
+      }
+
+      renderRecordings() {
+        const grid = document.getElementById('recordings-grid');
+        grid.innerHTML = '';
+
+        if (!this.recordings.length) {
+          grid.innerHTML = `
+            <div class="col-span-full py-20 text-center text-slate-500 font-mono">
+              <i data-lucide="video-off" class="w-10 h-10 mx-auto mb-2 opacity-50"></i>
+              No recorded takes yet. Launch the studio and click "Record Take".
+            </div>
+          `;
+          lucide.createIcons();
+          return;
+        }
+
+        this.recordings.forEach(rec => {
+          const card = document.createElement('div');
+          card.className = 'rounded-xl bg-studio-900 border border-studio-800 p-4 flex flex-col justify-between space-y-3';
+          card.innerHTML = `
+            <div class="aspect-video bg-black rounded-lg overflow-hidden relative">
+              <video src="${rec.url}" class="w-full h-full object-cover"></video>
+              <div class="absolute bottom-2 right-2 bg-studio-950/80 px-2 py-0.5 rounded text-[10px] font-mono text-white">${rec.size}</div>
+            </div>
+            <div>
+              <h4 class="text-sm font-bold text-white line-clamp-1">${this.escapeHtml(rec.scriptTitle)}</h4>
+              <p class="text-xs text-slate-400 font-mono">Recorded at ${this.escapeHtml(rec.createdAt)}</p>
+            </div>
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-studio-800">
+              <a href="${rec.url}" download="Take_${rec.id}.webm" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i> Download
+              </a>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+        lucide.createIcons();
+      }
+
+      clearRecordings() {
+        // Release the object URLs backing each recording's video preview,
+        // otherwise the underlying blobs stay pinned in memory for the
+        // lifetime of the page (they are never garbage collected on their own).
+        this.recordings.forEach(rec => {
+          try { URL.revokeObjectURL(rec.url); } catch (e) {}
+        });
+        this.recordings = [];
+        this.renderRecordings();
+        this.showToast('Recordings cleared');
+      }
+
+      updateSetting(key, val) {
+        this.settings[key] = val;
+        this.applySettingsToUI();
+        this.persistSettings();
+      }
+
+      applySettingsToUI() {
+        // Typography & Colors
+        const canvas = document.getElementById('prompter-content-canvas');
+        if (canvas) {
+          canvas.style.fontSize = `${this.settings.fontSize}px`;
+          canvas.style.fontFamily = this.settings.fontFamily;
+          canvas.style.lineHeight = this.settings.lineHeight;
+          canvas.style.textAlign = this.settings.textAlign;
+          canvas.style.color = this.settings.textColor;
+        }
+
+        // Camera Feed & Shroud
+        const camView = document.getElementById('camera-viewport-container');
+        const shroud = document.getElementById('camera-overlay-shroud');
+        if (camView) {
+          camView.style.opacity = this.settings.cameraEnabled ? (this.settings.cameraOpacity / 100) : 0;
+        }
+        if (shroud) {
+          shroud.style.backgroundColor = `rgba(12, 16, 23, ${this.settings.shroudOpacity / 100})`;
+        }
+
+        // Focus Cue Guide Color
+        const focusLine = document.getElementById('prompter-focus-line');
+        if (focusLine) {
+          focusLine.style.color = this.settings.cueColor;
+        }
+
+        // Update Labels
+        const lblSpeed = document.getElementById('label-speed-wpm');
+        if (lblSpeed) lblSpeed.textContent = `${this.settings.scrollSpeedWpm} WPM`;
+
+        const lblVad = document.getElementById('label-vad-threshold');
+        if (lblVad) lblVad.textContent = `${this.settings.vadThreshold}%`;
+
+        const lblFont = document.getElementById('label-font-size');
+        if (lblFont) lblFont.textContent = `${this.settings.fontSize} px`;
+
+        const lblCamOp = document.getElementById('label-camera-opacity');
+        if (lblCamOp) lblCamOp.textContent = `${this.settings.cameraOpacity}%`;
+
+        const lblShroud = document.getElementById('label-shroud-opacity');
+        if (lblShroud) lblShroud.textContent = `${this.settings.shroudOpacity}%`;
+
+        // Color swatch hex labels (previously never updated after picking a color)
+        const hexText = document.getElementById('hex-text-color');
+        if (hexText) hexText.textContent = this.settings.textColor.toUpperCase();
+
+        const hexCue = document.getElementById('hex-cue-color');
+        if (hexCue) hexCue.textContent = this.settings.cueColor.toUpperCase();
+
+        // Keep every input/select in the settings drawer in sync with real
+        // state (needed once settings come from localStorage instead of
+        // always matching the HTML's hardcoded default attributes)
+        this.syncSettingsFormControls();
+
+        // Pass to Engines
+        if (this.vadEngine) {
+          this.vadEngine.setThreshold(this.settings.vadThreshold);
+        }
+        if (this.prompterEngine) {
+          this.prompterEngine.autoSpeedWpm = this.settings.scrollSpeedWpm;
+        }
+      }
+
+      /**
+       * Reflects this.settings onto every input/select in the settings
+       * drawer. Without this, values restored from localStorage (or set
+       * programmatically) would silently disagree with what the controls
+       * display, since the markup only carries hardcoded default values.
+       */
+      syncSettingsFormControls() {
+        const setValue = (id, value) => {
+          const el = document.getElementById(id);
+          if (el && document.activeElement !== el) el.value = value;
+        };
+        const setChecked = (id, checked) => {
+          const el = document.getElementById(id);
+          if (el && document.activeElement !== el) el.checked = checked;
+        };
+
+        setValue('select-speech-language', this.settings.speechLanguage);
+        setValue('studio-quick-lang', this.settings.speechLanguage);
+        setValue('input-vad-threshold', this.settings.vadThreshold);
+        setValue('select-font-family', this.settings.fontFamily);
+        setValue('input-font-size', this.settings.fontSize);
+        setValue('select-line-height', this.settings.lineHeight);
+        setValue('select-text-align', this.settings.textAlign);
+        setValue('input-text-color', this.settings.textColor);
+        setValue('input-cue-color', this.settings.cueColor);
+        setChecked('check-camera-enable', this.settings.cameraEnabled);
+        setValue('input-camera-opacity', this.settings.cameraOpacity);
+        setValue('input-shroud-opacity', this.settings.shroudOpacity);
+        setValue('input-scroll-speed', this.settings.scrollSpeedWpm);
+      }
+
+      setPrompterMode(mode) {
+        this.settings.mode = mode;
+        if (this.prompterEngine) this.prompterEngine.mode = mode;
+
+        ['speech', 'auto', 'hybrid'].forEach(m => {
+          const btn = document.getElementById(`mode-opt-${m}`);
+          if (btn) {
+            btn.className = m === mode
+              ? 'py-1.5 rounded-lg font-medium text-white bg-brand-600 text-center transition-all'
+              : 'py-1.5 rounded-lg font-medium text-slate-400 hover:text-white text-center transition-all';
+          }
+        });
+
+        const modeTag = document.getElementById('studio-mode-tag');
+        if (modeTag) modeTag.textContent = mode.toUpperCase() + ' SYNC';
+
+        const quickModeLabel = document.getElementById('studio-quick-mode-label');
+        if (quickModeLabel) quickModeLabel.textContent = mode.toUpperCase();
+
+        this.persistSettings();
+      }
+
+      cyclePrompterMode() {
+        const modes = ['hybrid', 'speech', 'auto'];
+        const currentIdx = modes.indexOf(this.settings.mode);
+        const nextMode = modes[(currentIdx + 1) % modes.length];
+        this.setPrompterMode(nextMode);
+        this.showToast(`Prompter Mode: ${nextMode.toUpperCase()}`);
+      }
+
+      toggleMirror(axis) {
+        if (axis === 'horizontal') {
+          this.settings.mirrorHorizontal = !this.settings.mirrorHorizontal;
+        } else if (axis === 'vertical') {
+          this.settings.mirrorVertical = !this.settings.mirrorVertical;
+        }
+        this.applyMirrorStateToUI();
+        this.persistSettings();
+      }
+
+      applyMirrorStateToUI() {
+        const viewport = document.getElementById('prompter-scroll-viewport');
+        const btnH = document.getElementById('btn-mirror-h');
+        const btnV = document.getElementById('btn-mirror-v');
+        if (!viewport) return;
+
+        if (btnH) {
+          btnH.classList.toggle('bg-brand-600', this.settings.mirrorHorizontal);
+          btnH.classList.toggle('text-white', this.settings.mirrorHorizontal);
+        }
+        if (btnV) {
+          btnV.classList.toggle('bg-brand-600', this.settings.mirrorVertical);
+          btnV.classList.toggle('text-white', this.settings.mirrorVertical);
+        }
+
+        // Combining both axes uses the dedicated mirror-both class rather
+        // than stacking two CSS transforms (the second would overwrite the first)
+        viewport.classList.remove('mirror-horizontal', 'mirror-vertical', 'mirror-both');
+        if (this.settings.mirrorHorizontal && this.settings.mirrorVertical) {
+          viewport.classList.add('mirror-both');
+        } else if (this.settings.mirrorHorizontal) {
+          viewport.classList.add('mirror-horizontal');
+        } else if (this.settings.mirrorVertical) {
+          viewport.classList.add('mirror-vertical');
+        }
+      }
+
+      toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+
+      toggleStudioDrawer(drawerName) {
+        const drawer = document.getElementById('studio-drawer');
+        if (drawer.classList.contains('hidden')) {
+          drawer.classList.remove('hidden');
+        } else {
+          drawer.classList.add('hidden');
+        }
+      }
+
+      async switchCameraDevice(deviceId) {
+        if (this.cameraService) {
+          await this.cameraService.startPreview(deviceId);
+        }
+      }
+
+      showToast(msg) {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'px-4 py-2.5 rounded-xl bg-studio-900/95 border border-studio-700 text-white text-xs shadow-2xl flex items-center gap-2 transform translate-y-2 opacity-0 transition-all duration-200 pointer-events-auto';
+        toast.innerHTML = `<i data-lucide="info" class="w-4 h-4 text-brand-400 shrink-0"></i><span>${msg}</span>`;
+        container.appendChild(toast);
+        lucide.createIcons();
+
+        requestAnimationFrame(() => {
+          toast.classList.remove('translate-y-2', 'opacity-0');
+        });
+
+        setTimeout(() => {
+          toast.classList.add('opacity-0', 'translate-y-2');
+          setTimeout(() => toast.remove(), 200);
+        }, 2800);
+      }
+    }
+
+    let app = null;
+    window.addEventListener('DOMContentLoaded', () => {
+      app = new TeleprompterApp();
+    });
+  </script>
+</body>
+</html>

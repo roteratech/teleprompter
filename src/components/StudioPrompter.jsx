@@ -165,91 +165,68 @@ export default function StudioPrompter({
       if (!tokens.length || !words || !words.length) return;
       if (!isPlaying) setIsPlaying(true);
 
-      const session = speechSessionRef.current;
       const currentIdx = currentIndexRef.current;
 
-      // When a new speech result index arrives, anchor from freshest confirmed position
-      if (resultIndex !== session.currentResultIndex) {
-        session.currentResultIndex = resultIndex;
-        session.anchorIndex = currentIdx;
-        session.lastVerifiedIndex = currentIdx;
-      }
+      // Dynamic moving window: always anchored to freshest reader position
+      const startScan = Math.max(0, currentIdx - 2);
+      const endScan = Math.min(tokens.length - 1, currentIdx + 12);
 
-      const baseStart = Math.min(session.anchorIndex, currentIdx);
-      const searchStart = Math.max(0, baseStart - 2);
-      const searchEnd = Math.min(tokens.length - 1, baseStart + 16);
+      // Search recent spoken words in the moving window ahead of currentIdx
+      const recentWords = words.slice(-6);
+      let bestMatchedToken = -1;
+      let scriptAdvance = 1;
 
-      // Monotonic sequence matcher: tracks words in fast speech with gap tolerance
-      let lastMatchedScript = -1;
-      let scriptScan = searchStart;
-
-      for (let w = 0; w < words.length; w++) {
-        const spoken = words[w];
+      for (let w = 0; w < recentWords.length; w++) {
+        const spoken = recentWords[w];
         if (!spoken) continue;
 
-        // In fast speech, allow small gap (up to 3 script tokens ahead of last match)
-        const maxScan = Math.min(searchEnd, scriptScan + 3);
-        let matchIndex = -1;
-        let scriptAdvance = 1;
-        let spokenAdvance = 1;
-
-        for (let s = scriptScan; s <= maxScan; s++) {
+        // Scan tokens from startScan up to endScan
+        for (let s = startScan; s <= endScan; s++) {
           const scriptClean = tokens[s].cleanWord;
 
-          // 1. Direct / Phonetic match
+          // 1. Direct or phonetic match
           if (isWordMatch(spoken, scriptClean)) {
-            matchIndex = s;
-            scriptAdvance = 1;
+            if (s > bestMatchedToken) {
+              bestMatchedToken = s;
+              scriptAdvance = 1;
+            }
             break;
           }
 
-          // 2. 1 spoken word = 2 script tokens (e.g. "bugün" == "bu" + "gün")
+          // 2. Compound match (1 spoken word = 2 script tokens, e.g. "bugün" == "bu" + "gün")
           if (s + 1 < tokens.length) {
             const combinedScript = normalizeWord(tokens[s].cleanWord + tokens[s + 1].cleanWord);
             if (isWordMatch(spoken, combinedScript)) {
-              matchIndex = s;
-              scriptAdvance = 2;
+              if (s + 1 > bestMatchedToken) {
+                bestMatchedToken = s;
+                scriptAdvance = 2;
+              }
               break;
             }
           }
 
-          // 3. 2 spoken words = 1 script token (e.g. "bu" + "gün" == "bugün")
-          if (w + 1 < words.length) {
-            const combinedSpoken = normalizeWord(spoken + words[w + 1]);
+          // 3. Reverse compound (2 spoken words = 1 script token)
+          if (w + 1 < recentWords.length) {
+            const combinedSpoken = normalizeWord(spoken + recentWords[w + 1]);
             if (isWordMatch(combinedSpoken, scriptClean)) {
-              matchIndex = s;
-              scriptAdvance = 1;
-              spokenAdvance = 2;
+              if (s > bestMatchedToken) {
+                bestMatchedToken = s;
+                scriptAdvance = 1;
+              }
               break;
             }
           }
-
-          // 4. In interim speech: partial prefix of active word
-          if (!isFinal && w === words.length - 1 && spoken.length >= 3 && scriptClean.startsWith(spoken)) {
-            matchIndex = s;
-            scriptAdvance = 0;
-            break;
-          }
-        }
-
-        if (matchIndex !== -1) {
-          lastMatchedScript = matchIndex + scriptAdvance;
-          scriptScan = matchIndex + scriptAdvance;
-          if (spokenAdvance === 2) w++;
         }
       }
 
-      if (lastMatchedScript !== -1) {
-        const verifiedIndex = Math.min(tokens.length - 1, lastMatchedScript);
-        if (verifiedIndex > currentIndexRef.current) {
-          updateCurrentIndex(verifiedIndex);
-          session.lastVerifiedIndex = verifiedIndex;
-        }
-      }
+      if (bestMatchedToken !== -1) {
+        // Prevent huge unearned leaps: at most 4 tokens forward in a single event
+        const maxAllowed = Math.min(tokens.length - 1, currentIdx + 4);
+        const nextIndex = Math.min(maxAllowed, bestMatchedToken + scriptAdvance);
 
-      if (isFinal) {
-        session.anchorIndex = Math.max(currentIndexRef.current, session.lastVerifiedIndex);
-        session.currentResultIndex = -1;
+        if (nextIndex > currentIdx) {
+          updateCurrentIndex(nextIndex);
+        }
       }
     };
   }, [speechEngine, isPlaying, tokens, updateCurrentIndex]);

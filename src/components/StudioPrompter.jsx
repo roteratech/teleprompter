@@ -174,105 +174,76 @@ export default function StudioPrompter({
         session.lastVerifiedIndex = currentIndexRef.current;
       }
 
-      const baseAnchor = Math.max(session.anchorIndex, currentIndexRef.current);
-      const minAnchor = Math.max(0, baseAnchor - 2);
-      const maxAnchor = Math.min(tokens.length - 1, baseAnchor + 3);
+      const baseStart = Math.min(session.anchorIndex, currentIdx);
+      const searchStart = Math.max(0, baseStart - 2);
+      const searchEnd = Math.min(tokens.length - 1, baseStart + 16);
 
-      let startTokenIdx = -1;
-      let startWordIdx = 0;
-      let bestDist = 999;
+      // Monotonic sequence matcher: tracks words in fast speech with gap tolerance
+      let lastMatchedScript = -1;
+      let scriptScan = searchStart;
 
-      for (let t = minAnchor; t <= maxAnchor; t++) {
-        // Direct word match
-        if (isWordMatch(words[0], tokens[t].cleanWord)) {
-          const dist = Math.abs(t - baseAnchor);
-          if (dist < bestDist) {
-            bestDist = dist;
-            startTokenIdx = t;
-            startWordIdx = 0;
+      for (let w = 0; w < words.length; w++) {
+        const spoken = words[w];
+        if (!spoken) continue;
+
+        // In fast speech, allow small gap (up to 3 script tokens ahead of last match)
+        const maxScan = Math.min(searchEnd, scriptScan + 3);
+        let matchIndex = -1;
+        let scriptAdvance = 1;
+        let spokenAdvance = 1;
+
+        for (let s = scriptScan; s <= maxScan; s++) {
+          const scriptClean = tokens[s].cleanWord;
+
+          // 1. Direct / Phonetic match
+          if (isWordMatch(spoken, scriptClean)) {
+            matchIndex = s;
+            scriptAdvance = 1;
+            break;
+          }
+
+          // 2. 1 spoken word = 2 script tokens (e.g. "bugün" == "bu" + "gün")
+          if (s + 1 < tokens.length) {
+            const combinedScript = normalizeWord(tokens[s].cleanWord + tokens[s + 1].cleanWord);
+            if (isWordMatch(spoken, combinedScript)) {
+              matchIndex = s;
+              scriptAdvance = 2;
+              break;
+            }
+          }
+
+          // 3. 2 spoken words = 1 script token (e.g. "bu" + "gün" == "bugün")
+          if (w + 1 < words.length) {
+            const combinedSpoken = normalizeWord(spoken + words[w + 1]);
+            if (isWordMatch(combinedSpoken, scriptClean)) {
+              matchIndex = s;
+              scriptAdvance = 1;
+              spokenAdvance = 2;
+              break;
+            }
+          }
+
+          // 4. In interim speech: partial prefix of active word
+          if (!isFinal && w === words.length - 1 && spoken.length >= 3 && scriptClean.startsWith(spoken)) {
+            matchIndex = s;
+            scriptAdvance = 0;
+            break;
           }
         }
-        // Compound match: 1 spoken word = tokens[t] + tokens[t+1] (e.g. "bugün" == "bu" + "gün")
-        else if (t + 1 < tokens.length && isWordMatch(words[0], normalizeWord(tokens[t].cleanWord + tokens[t + 1].cleanWord))) {
-          const dist = Math.abs(t - baseAnchor);
-          if (dist < bestDist) {
-            bestDist = dist;
-            startTokenIdx = t;
-            startWordIdx = 0;
-          }
-        }
-        // Hesitation: words[0] was filler/murmur, words[1] matches tokens[t]
-        else if (words.length > 1 && isWordMatch(words[1], tokens[t].cleanWord)) {
-          const dist = Math.abs(t - baseAnchor);
-          if (dist < bestDist) {
-            bestDist = dist;
-            startTokenIdx = t;
-            startWordIdx = 1;
-          }
+
+        if (matchIndex !== -1) {
+          lastMatchedScript = matchIndex + scriptAdvance;
+          scriptScan = matchIndex + scriptAdvance;
+          if (spokenAdvance === 2) w++;
         }
       }
 
-      // If no local match, DO NOT jump or advance
-      if (startTokenIdx === -1) return;
-
-      // Verify sequence word-by-word strictly
-      let sPtr = startTokenIdx;
-      let wPtr = startWordIdx;
-
-      while (wPtr < words.length && sPtr < tokens.length) {
-        const spoken = words[wPtr];
-        const scriptClean = tokens[sPtr].cleanWord;
-
-        // Exact / phonetic word match
-        if (isWordMatch(spoken, scriptClean)) {
-          sPtr++;
-          wPtr++;
-          continue;
+      if (lastMatchedScript !== -1) {
+        const verifiedIndex = Math.min(tokens.length - 1, lastMatchedScript);
+        if (verifiedIndex > currentIndexRef.current) {
+          updateCurrentIndex(verifiedIndex);
+          session.lastVerifiedIndex = verifiedIndex;
         }
-
-        // Spoken compound: 1 spoken word = 2 script tokens (e.g. "bugün" -> "bu" + "gün")
-        if (sPtr + 1 < tokens.length) {
-          const combinedScript = normalizeWord(tokens[sPtr].cleanWord + tokens[sPtr + 1].cleanWord);
-          if (isWordMatch(spoken, combinedScript)) {
-            sPtr += 2;
-            wPtr++;
-            continue;
-          }
-        }
-
-        // Script compound: 2 spoken words = 1 script token (e.g. "bu" + "gün" -> "bugün")
-        if (wPtr + 1 < words.length) {
-          const combinedSpoken = normalizeWord(spoken + words[wPtr + 1]);
-          if (isWordMatch(combinedSpoken, scriptClean)) {
-            sPtr++;
-            wPtr += 2;
-            continue;
-          }
-        }
-
-        // Minor skip tolerance: user missed 1 short word, next script word matches
-        if (sPtr + 1 < tokens.length && isWordMatch(spoken, tokens[sPtr + 1].cleanWord)) {
-          sPtr += 2;
-          wPtr++;
-          continue;
-        }
-
-        // User hesitated with a filler sound in between words
-        if (wPtr + 1 < words.length && isWordMatch(words[wPtr + 1], scriptClean)) {
-          wPtr += 2;
-          sPtr++;
-          continue;
-        }
-
-        // Sequence diverged: STOP. Never leap over unsaid words.
-        break;
-      }
-
-      const verifiedIndex = Math.min(tokens.length - 1, sPtr);
-
-      if (verifiedIndex > currentIndexRef.current) {
-        updateCurrentIndex(verifiedIndex);
-        session.lastVerifiedIndex = verifiedIndex;
       }
 
       if (isFinal) {
@@ -319,11 +290,11 @@ export default function StudioPrompter({
         }
       }
 
-      // Smooth Lerp toward targetScrollTop
+      // Smooth Lerp toward targetScrollTop (responsive and lag-free for fast speech)
       if (viewport && !scrollAnimRef.current.isUserTouching) {
         const diff = scrollAnimRef.current.targetScrollTop - scrollAnimRef.current.currentScrollTop;
         if (Math.abs(diff) > 0.1) {
-          scrollAnimRef.current.currentScrollTop += Math.sign(diff) * Math.max(0.3, Math.abs(diff) * 0.12);
+          scrollAnimRef.current.currentScrollTop += Math.sign(diff) * Math.min(30, Math.max(0.5, Math.abs(diff) * 0.18));
           if (Math.abs(scrollAnimRef.current.targetScrollTop - scrollAnimRef.current.currentScrollTop) < 0.5) {
             scrollAnimRef.current.currentScrollTop = scrollAnimRef.current.targetScrollTop;
           }

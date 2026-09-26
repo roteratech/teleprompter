@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   Play, Pause, RotateCcw, Video, Square, FlipHorizontal, Sliders,
-  Mic, Gauge, Eye, Volume2, Camera, CameraOff, ChevronUp, ChevronDown
+  Mic, Gauge, Eye, Volume2, Camera, CameraOff, ChevronUp, ChevronDown, Globe
 } from 'lucide-react';
-import { normalizeWord, isWordMatch } from '../utils/textMatcher';
+import { normalizeWord, isWordMatch, detectScriptLanguage } from '../utils/textMatcher';
 
 export default function StudioPrompter({
   script,
@@ -99,32 +99,50 @@ export default function StudioPrompter({
     }
   }, []);
 
+  const currentIndexRef = useRef(0);
+  currentIndexRef.current = currentIndex;
+
+  const updateCurrentIndex = useCallback((newIdx, immediate = false) => {
+    currentIndexRef.current = newIdx;
+    setCurrentIndex(newIdx);
+    alignViewportToIndex(newIdx, immediate);
+  }, [alignViewportToIndex]);
+
   const speechSessionRef = useRef({
     currentResultIndex: -1,
     anchorIndex: 0,
     lastVerifiedIndex: 0
   });
 
+  // Automatically adapt recognition language to script content
+  useEffect(() => {
+    if (script && script.content) {
+      const detected = detectScriptLanguage(script.content);
+      if (detected !== settings.speechLanguage) {
+        onUpdateSettings({ speechLanguage: detected });
+        if (speechEngine) speechEngine.setLanguage(detected);
+      }
+    }
+  }, [script?.id]);
+
   // Jump to specific token
   const handleTokenClick = (idx) => {
-    setCurrentIndex(idx);
     speechSessionRef.current = {
       currentResultIndex: -1,
       anchorIndex: idx,
       lastVerifiedIndex: idx
     };
-    alignViewportToIndex(idx, true);
+    updateCurrentIndex(idx, true);
   };
 
   // Reset Prompter to beginning
   const handleReset = () => {
-    setCurrentIndex(0);
     speechSessionRef.current = {
       currentResultIndex: -1,
       anchorIndex: 0,
       lastVerifiedIndex: 0
     };
-    alignViewportToIndex(0, true);
+    updateCurrentIndex(0, true);
   };
 
   // Toggle playback
@@ -149,36 +167,49 @@ export default function StudioPrompter({
 
       const session = speechSessionRef.current;
 
-      // When a new speech result index arrives, anchor from current confirmed position
+      // When a new speech result index arrives, anchor from freshest confirmed position
       if (resultIndex !== session.currentResultIndex) {
         session.currentResultIndex = resultIndex;
-        session.anchorIndex = currentIndex;
-        session.lastVerifiedIndex = currentIndex;
+        session.anchorIndex = currentIndexRef.current;
+        session.lastVerifiedIndex = currentIndexRef.current;
       }
 
-      const anchor = session.anchorIndex;
-      const minAnchor = Math.max(0, anchor - 1);
-      const maxAnchor = Math.min(tokens.length - 1, anchor + 2);
+      const baseAnchor = Math.max(session.anchorIndex, currentIndexRef.current);
+      const minAnchor = Math.max(0, baseAnchor - 2);
+      const maxAnchor = Math.min(tokens.length - 1, baseAnchor + 3);
 
       let startTokenIdx = -1;
       let startWordIdx = 0;
+      let bestDist = 999;
 
-      // Find local anchor in strict [anchor - 1, anchor + 2] window
-      if (anchor < tokens.length && isWordMatch(words[0], tokens[anchor].cleanWord)) {
-        startTokenIdx = anchor;
-      } else if (anchor + 1 < tokens.length && isWordMatch(words[0], tokens[anchor + 1].cleanWord)) {
-        // User skipped 1 word or speech engine dropped a word
-        startTokenIdx = anchor + 1;
-      } else if (anchor > 0 && isWordMatch(words[0], tokens[anchor - 1].cleanWord)) {
-        // Speaker repeated the previous word
-        startTokenIdx = anchor - 1;
-      } else if (anchor + 1 < tokens.length && isWordMatch(words[0], normalizeWord(tokens[anchor].cleanWord + tokens[anchor + 1].cleanWord))) {
-        // Compound match (e.g. "bugün" == "bu" + "gün")
-        startTokenIdx = anchor;
-      } else if (words.length > 1 && anchor < tokens.length && isWordMatch(words[1], tokens[anchor].cleanWord)) {
-        // First spoken token was hesitation/filler, second matches anchor
-        startTokenIdx = anchor;
-        startWordIdx = 1;
+      for (let t = minAnchor; t <= maxAnchor; t++) {
+        // Direct word match
+        if (isWordMatch(words[0], tokens[t].cleanWord)) {
+          const dist = Math.abs(t - baseAnchor);
+          if (dist < bestDist) {
+            bestDist = dist;
+            startTokenIdx = t;
+            startWordIdx = 0;
+          }
+        }
+        // Compound match: 1 spoken word = tokens[t] + tokens[t+1] (e.g. "bugün" == "bu" + "gün")
+        else if (t + 1 < tokens.length && isWordMatch(words[0], normalizeWord(tokens[t].cleanWord + tokens[t + 1].cleanWord))) {
+          const dist = Math.abs(t - baseAnchor);
+          if (dist < bestDist) {
+            bestDist = dist;
+            startTokenIdx = t;
+            startWordIdx = 0;
+          }
+        }
+        // Hesitation: words[0] was filler/murmur, words[1] matches tokens[t]
+        else if (words.length > 1 && isWordMatch(words[1], tokens[t].cleanWord)) {
+          const dist = Math.abs(t - baseAnchor);
+          if (dist < bestDist) {
+            bestDist = dist;
+            startTokenIdx = t;
+            startWordIdx = 1;
+          }
+        }
       }
 
       // If no local match, DO NOT jump or advance
@@ -226,24 +257,30 @@ export default function StudioPrompter({
           continue;
         }
 
+        // User hesitated with a filler sound in between words
+        if (wPtr + 1 < words.length && isWordMatch(words[wPtr + 1], scriptClean)) {
+          wPtr += 2;
+          sPtr++;
+          continue;
+        }
+
         // Sequence diverged: STOP. Never leap over unsaid words.
         break;
       }
 
       const verifiedIndex = Math.min(tokens.length - 1, sPtr);
 
-      if (verifiedIndex > currentIndex) {
-        setCurrentIndex(verifiedIndex);
-        alignViewportToIndex(verifiedIndex, false);
+      if (verifiedIndex > currentIndexRef.current) {
+        updateCurrentIndex(verifiedIndex);
         session.lastVerifiedIndex = verifiedIndex;
       }
 
       if (isFinal) {
-        session.anchorIndex = Math.max(currentIndex, session.lastVerifiedIndex);
+        session.anchorIndex = Math.max(currentIndexRef.current, session.lastVerifiedIndex);
         session.currentResultIndex = -1;
       }
     };
-  }, [speechEngine, isPlaying, tokens, currentIndex, alignViewportToIndex]);
+  }, [speechEngine, isPlaying, tokens, updateCurrentIndex]);
 
   // Main Smooth Lerp & Auto-scroll RAF Loop
   useEffect(() => {
@@ -611,6 +648,34 @@ export default function StudioPrompter({
             Manual
           </button>
         </div>
+
+        <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-studio)', margin: '0 2px' }} />
+
+        {/* Speech Recognition Language Toggle */}
+        <button
+          onClick={() => {
+            const nextLang = settings.speechLanguage === 'az-AZ' ? 'tr-TR' : settings.speechLanguage === 'tr-TR' ? 'en-US' : 'az-AZ';
+            onUpdateSettings({ speechLanguage: nextLang });
+            if (speechEngine) speechEngine.setLanguage(nextLang);
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '6px 10px',
+            borderRadius: '8px',
+            border: '1px solid rgba(56, 189, 248, 0.4)',
+            backgroundColor: 'rgba(56, 189, 248, 0.12)',
+            color: '#38bdf8',
+            fontSize: '11px',
+            fontWeight: 700,
+            cursor: 'pointer'
+          }}
+          title="Konuşma Tanıma Dili (Tıklayarak Değiştir: AZ / TR / EN)"
+        >
+          <Globe size={13} />
+          <span>{settings.speechLanguage === 'az-AZ' ? 'AZ' : settings.speechLanguage === 'tr-TR' ? 'TR' : 'EN'}</span>
+        </button>
 
         {/* Speed WPM Adjuster */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 8px' }}>

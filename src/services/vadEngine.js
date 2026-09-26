@@ -29,7 +29,7 @@ export class AudioVADEngine {
       // away from the Web Speech API recognizer.
       this.mediaStream = stream || await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: false,
+          echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
         }

@@ -116,23 +116,30 @@ export default function App() {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [vadActive, setVadActive] = useState(true);
 
-  // Singletons for services
+  // Singletons for services initialized synchronously so children always receive valid instances
   const vadEngineRef = useRef(null);
+  if (!vadEngineRef.current) {
+    vadEngineRef.current = new AudioVADEngine();
+  }
   const speechEngineRef = useRef(null);
+  if (!speechEngineRef.current) {
+    speechEngineRef.current = new SpeechEngine(settings.speechLanguage);
+  }
   const cameraServiceRef = useRef(null);
+  if (!cameraServiceRef.current) {
+    cameraServiceRef.current = new CameraRecordingService();
+  }
+
+  const vad = vadEngineRef.current;
+  const speech = speechEngineRef.current;
+  const camera = cameraServiceRef.current;
 
   // Initialize Audio & Speech Services
   useEffect(() => {
-    const vad = new AudioVADEngine();
     vad.setThreshold(settings.vadThreshold);
-    vadEngineRef.current = vad;
-
-    const speech = new SpeechEngine(settings.speechLanguage);
-    speechEngineRef.current = speech;
-
-    const camera = new CameraRecordingService();
     camera.onTimerUpdate = (sec) => setRecordingTime(sec);
-    cameraServiceRef.current = camera;
+
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     // Start Audio and Speech
     vad.subscribe((data) => {
@@ -141,24 +148,49 @@ export default function App() {
       setIsCalibrating(data.calibrating);
     });
 
-    const initMic = async () => {
-      const ok = await vad.start();
-      if (ok) {
-        speech.initialize();
-        speech.start();
-        setVadActive(true);
-      } else {
-        setVadActive(false);
+    speech.onSpeechActivity = (speaking) => {
+      if (isMobile) {
+        setIsSpeaking(speaking);
+        setAudioRms(speaking ? 0.45 : 0);
       }
     };
 
-    initMic();
+    const startAudioServices = async () => {
+      // 1. Always prioritize SpeechRecognition directly
+      speech.initialize();
+      speech.start();
+      setVadActive(true);
+
+      // 2. On desktop, start AudioVADEngine for RMS meter.
+      // On Android mobile, do not open concurrent getUserMedia to prevent Android mic locking.
+      if (!isMobile) {
+        try {
+          const ok = await vad.start();
+          if (!ok) setVadActive(true);
+        } catch (e) {}
+      }
+    };
+
+    // User gesture listener for Android/iOS mobile browsers
+    const onUserGesture = () => {
+      if (!speech.isRecognizing) {
+        startAudioServices();
+      }
+    };
+
+    window.addEventListener('touchstart', onUserGesture, { passive: true });
+    window.addEventListener('click', onUserGesture, { passive: true });
+
+    // Attempt direct startup (works on desktop if permission granted)
+    startAudioServices();
 
     // Check secure context for mobile devices
     const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
     if (!isSecure) setShowHttpsWarning(true);
 
     return () => {
+      window.removeEventListener('touchstart', onUserGesture);
+      window.removeEventListener('click', onUserGesture);
       vad.stop();
       speech.stop();
       camera.stopPreview();
@@ -167,16 +199,12 @@ export default function App() {
 
   // Update VAD threshold when settings change
   useEffect(() => {
-    if (vadEngineRef.current) {
-      vadEngineRef.current.setThreshold(settings.vadThreshold);
-    }
+    vad.setThreshold(settings.vadThreshold);
   }, [settings.vadThreshold]);
 
   // Update speech language when settings change
   useEffect(() => {
-    if (speechEngineRef.current) {
-      speechEngineRef.current.setLanguage(settings.speechLanguage);
-    }
+    speech.setLanguage(settings.speechLanguage);
   }, [settings.speechLanguage]);
 
   // Save scripts & settings to LocalStorage
@@ -334,8 +362,8 @@ export default function App() {
             audioRms={audioRms}
             isSpeaking={isSpeaking}
             vadActive={vadActive}
-            speechEngine={speechEngineRef.current}
-            cameraService={cameraServiceRef.current}
+            speechEngine={speech}
+            cameraService={camera}
             isRecording={isRecording}
             recordingTime={recordingTime}
             onStartRecording={handleStartRecording}

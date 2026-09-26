@@ -29,7 +29,17 @@ export default function StudioPrompter({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [showTranscriptPill, setShowTranscriptPill] = useState(false);
+  const [isSpeechActive, setIsSpeechActive] = useState(false);
   const transcriptTimerRef = useRef(null);
+  const isMobile = useMemo(() => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent), []);
+
+  useEffect(() => {
+    if (!speechEngine) return;
+    const interval = setInterval(() => {
+      setIsSpeechActive(Boolean(speechEngine.isRecognizing));
+    }, 500);
+    return () => clearInterval(interval);
+  }, [speechEngine]);
 
   // Animation scroll ref
   const scrollAnimRef = useRef({
@@ -127,6 +137,9 @@ export default function StudioPrompter({
 
   // Jump to specific token
   const handleTokenClick = (idx) => {
+    if (speechEngine && !speechEngine.isRecognizing) {
+      speechEngine.start();
+    }
     speechSessionRef.current = {
       currentResultIndex: -1,
       anchorIndex: idx,
@@ -137,6 +150,9 @@ export default function StudioPrompter({
 
   // Reset Prompter to beginning
   const handleReset = () => {
+    if (speechEngine && !speechEngine.isRecognizing) {
+      speechEngine.start();
+    }
     speechSessionRef.current = {
       currentResultIndex: -1,
       anchorIndex: 0,
@@ -147,7 +163,13 @@ export default function StudioPrompter({
 
   // Toggle playback
   const handleTogglePlay = () => {
-    setIsPlaying(prev => !prev);
+    setIsPlaying(prev => {
+      const next = !prev;
+      if (next && speechEngine && !speechEngine.isRecognizing) {
+        speechEngine.start();
+      }
+      return next;
+    });
   };
 
   // Real-time word-by-word speech recognition alignment
@@ -337,7 +359,12 @@ export default function StudioPrompter({
     const vp = viewportRef.current;
     if (!vp) return;
 
-    const onTouchStart = () => { scrollAnimRef.current.isUserTouching = true; };
+    const onTouchStart = () => {
+      scrollAnimRef.current.isUserTouching = true;
+      if (speechEngine && !speechEngine.isRecognizing) {
+        speechEngine.start();
+      }
+    };
     const onTouchEnd = () => { scrollAnimRef.current.isUserTouching = false; };
     const onScroll = () => {
       if (scrollAnimRef.current.isUserTouching) {
@@ -459,6 +486,37 @@ export default function StudioPrompter({
           </span>
         </div>
       </div>
+
+      {/* MOBILE TAP-TO-START VOICE BANNER */}
+      {isMobile && !isSpeechActive && (
+        <div
+          onClick={() => {
+            if (speechEngine) speechEngine.start();
+          }}
+          style={{
+            position: 'absolute',
+            top: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 35,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 20px',
+            borderRadius: '999px',
+            backgroundColor: '#0284c7',
+            color: '#ffffff',
+            boxShadow: '0 8px 30px rgba(2, 132, 199, 0.7)',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: 700,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          <Mic size={16} />
+          <span>Danışmağa başlamaq üçün toxunun</span>
+        </div>
+      )}
 
       {/* FLOATING LIVE SPEECH RECOGNITION HUD PILL */}
       <div style={{

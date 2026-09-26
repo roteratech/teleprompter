@@ -42,6 +42,10 @@ export class SpeechEngine {
     this.recognition.lang = this.language;
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    this.recognition.continuous = !isMobile;
+    this.recognition.interimResults = true;
+    this.recognition.maxAlternatives = 3;
+    this.recognition.lang = this.language;
 
     const setSpeaking = (speaking) => {
       if (this._speakingTimeout) {
@@ -127,6 +131,16 @@ export class SpeechEngine {
 
     this.recognition.onerror = (event) => {
       if (event.error === 'no-speech') return;
+      if (event.error === 'language-not-supported') {
+        console.warn('Language not supported on device, falling back to tr-TR');
+        this.language = 'tr-TR';
+        if (this.recognition) this.recognition.lang = 'tr-TR';
+        return;
+      }
+      if (isMobile && (event.error === 'audio-capture' || event.error === 'network')) {
+        console.warn('Mobile transient speech error:', event.error);
+        return;
+      }
       console.warn('Speech recognition error:', event.error);
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         this.isRecognizing = false;
@@ -137,20 +151,30 @@ export class SpeechEngine {
     this.recognition.onend = () => {
       if (!this.isRecognizing) return;
       if (this._restartTimer) clearTimeout(this._restartTimer);
-      const delay = isMobile ? 250 : 120;
+      const delay = isMobile ? 40 : 100;
       this._restartTimer = setTimeout(() => {
         if (!this.isRecognizing) return;
         try {
           this.recognition.start();
           this._restartAttempts = 0;
         } catch (e) {
-          this._restartAttempts = (this._restartAttempts || 0) + 1;
-          if (this._restartAttempts < 6) {
-            setTimeout(() => {
-              if (this.isRecognizing) {
-                try { this.recognition.start(); } catch (e2) {}
-              }
-            }, 400);
+          // On mobile Android, reusing an ended instance fails. Re-initialize a fresh instance.
+          try {
+            this.initialize();
+            this.recognition.start();
+            this._restartAttempts = 0;
+          } catch (e2) {
+            this._restartAttempts = (this._restartAttempts || 0) + 1;
+            if (this._restartAttempts < 30) {
+              setTimeout(() => {
+                if (this.isRecognizing) {
+                  try {
+                    this.initialize();
+                    this.recognition.start();
+                  } catch (e3) {}
+                }
+              }, isMobile ? 100 : 300);
+            }
           }
         }
       }, delay);
@@ -179,8 +203,8 @@ export class SpeechEngine {
     }
   }
 
-  start() {
-    if (!this.recognition) {
+  start(forceFresh = false) {
+    if (!this.recognition || forceFresh) {
       if (!this.initialize()) return false;
     }
     this.isRecognizing = true;
@@ -193,7 +217,13 @@ export class SpeechEngine {
         // Recognition already active
         return true;
       }
-      return false;
+      try {
+        this.initialize();
+        this.recognition.start();
+        return true;
+      } catch (err) {
+        return false;
+      }
     }
   }
 

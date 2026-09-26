@@ -99,15 +99,31 @@ export default function StudioPrompter({
     }
   }, []);
 
+  const speechSessionRef = useRef({
+    currentResultIndex: -1,
+    anchorIndex: 0,
+    lastVerifiedIndex: 0
+  });
+
   // Jump to specific token
   const handleTokenClick = (idx) => {
     setCurrentIndex(idx);
+    speechSessionRef.current = {
+      currentResultIndex: -1,
+      anchorIndex: idx,
+      lastVerifiedIndex: idx
+    };
     alignViewportToIndex(idx, true);
   };
 
   // Reset Prompter to beginning
   const handleReset = () => {
     setCurrentIndex(0);
+    speechSessionRef.current = {
+      currentResultIndex: -1,
+      anchorIndex: 0,
+      lastVerifiedIndex: 0
+    };
     alignViewportToIndex(0, true);
   };
 
@@ -116,7 +132,7 @@ export default function StudioPrompter({
     setIsPlaying(prev => !prev);
   };
 
-  // Cumulative speech recognition alignment callback
+  // Real-time word-by-word speech recognition alignment
   useEffect(() => {
     if (!speechEngine) return;
 
@@ -127,55 +143,104 @@ export default function StudioPrompter({
       transcriptTimerRef.current = setTimeout(() => setShowTranscriptPill(false), 2200);
     };
 
-    speechEngine.onTokensMatched = (spokenTokens) => {
-      if (!isPlaying || !tokens.length || currentIndex >= tokens.length - 1) return;
-      if (!spokenTokens || !spokenTokens.length) return;
+    speechEngine.onSpeechPhrase = ({ resultIndex, transcript, isFinal, words }) => {
+      if (!isPlaying || !tokens.length) return;
+      if (!words || !words.length) return;
 
-      const recentSpoken = spokenTokens.slice(-10);
-      const SEARCH_WINDOW = 60;
-      const searchStart = currentIndex;
-      const searchEnd = Math.min(tokens.length - 1, searchStart + SEARCH_WINDOW);
+      const session = speechSessionRef.current;
 
-      let bestScriptIdx = -1;
-
-      for (let sIdx = recentSpoken.length - 1; sIdx >= 0; sIdx--) {
-        const spokenWord = recentSpoken[sIdx];
-        if (!spokenWord || spokenWord.length < 2) continue;
-
-        for (let tIdx = searchStart; tIdx <= searchEnd; tIdx++) {
-          if (!isWordMatch(spokenWord, tokens[tIdx].cleanWord)) continue;
-
-          // Extend match forward
-          let ext = 0;
-          let sTest = sIdx + 1;
-          let tTest = tIdx + 1;
-          while (sTest < recentSpoken.length && tTest < tokens.length && ext < 8) {
-            if (isWordMatch(recentSpoken[sTest], tokens[tTest].cleanWord)) {
-              ext++;
-              sTest++;
-              tTest++;
-            } else if (tTest + 1 < tokens.length && isWordMatch(recentSpoken[sTest], tokens[tTest + 1].cleanWord)) {
-              ext++;
-              sTest++;
-              tTest += 2;
-            } else break;
-          }
-
-          const scriptEndIdx = tIdx + ext;
-          if (scriptEndIdx > bestScriptIdx) {
-            bestScriptIdx = scriptEndIdx;
-          }
-          break;
-        }
-        if (bestScriptIdx >= 0) break;
+      // When a new speech result index arrives, anchor from current confirmed position
+      if (resultIndex !== session.currentResultIndex) {
+        session.currentResultIndex = resultIndex;
+        session.anchorIndex = currentIndex;
+        session.lastVerifiedIndex = currentIndex;
       }
 
-      if (bestScriptIdx >= 0 && bestScriptIdx >= currentIndex) {
-        const newIdx = Math.min(tokens.length - 1, bestScriptIdx + 1);
-        if (newIdx > currentIndex) {
-          setCurrentIndex(newIdx);
-          alignViewportToIndex(newIdx, false);
+      const anchor = session.anchorIndex;
+      const minAnchor = Math.max(0, anchor - 1);
+      const maxAnchor = Math.min(tokens.length - 1, anchor + 2);
+
+      let startTokenIdx = -1;
+      let startWordIdx = 0;
+
+      // Find local anchor in strict [anchor - 1, anchor + 2] window
+      if (anchor < tokens.length && isWordMatch(words[0], tokens[anchor].cleanWord)) {
+        startTokenIdx = anchor;
+      } else if (anchor + 1 < tokens.length && isWordMatch(words[0], tokens[anchor + 1].cleanWord)) {
+        // User skipped 1 word or speech engine dropped a word
+        startTokenIdx = anchor + 1;
+      } else if (anchor > 0 && isWordMatch(words[0], tokens[anchor - 1].cleanWord)) {
+        // Speaker repeated the previous word
+        startTokenIdx = anchor - 1;
+      } else if (anchor + 1 < tokens.length && isWordMatch(words[0], normalizeWord(tokens[anchor].cleanWord + tokens[anchor + 1].cleanWord))) {
+        // Compound match (e.g. "bugün" == "bu" + "gün")
+        startTokenIdx = anchor;
+      } else if (words.length > 1 && anchor < tokens.length && isWordMatch(words[1], tokens[anchor].cleanWord)) {
+        // First spoken token was hesitation/filler, second matches anchor
+        startTokenIdx = anchor;
+        startWordIdx = 1;
+      }
+
+      // If no local match, DO NOT jump or advance
+      if (startTokenIdx === -1) return;
+
+      // Verify sequence word-by-word strictly
+      let sPtr = startTokenIdx;
+      let wPtr = startWordIdx;
+
+      while (wPtr < words.length && sPtr < tokens.length) {
+        const spoken = words[wPtr];
+        const scriptClean = tokens[sPtr].cleanWord;
+
+        // Exact / phonetic word match
+        if (isWordMatch(spoken, scriptClean)) {
+          sPtr++;
+          wPtr++;
+          continue;
         }
+
+        // Spoken compound: 1 spoken word = 2 script tokens (e.g. "bugün" -> "bu" + "gün")
+        if (sPtr + 1 < tokens.length) {
+          const combinedScript = normalizeWord(tokens[sPtr].cleanWord + tokens[sPtr + 1].cleanWord);
+          if (isWordMatch(spoken, combinedScript)) {
+            sPtr += 2;
+            wPtr++;
+            continue;
+          }
+        }
+
+        // Script compound: 2 spoken words = 1 script token (e.g. "bu" + "gün" -> "bugün")
+        if (wPtr + 1 < words.length) {
+          const combinedSpoken = normalizeWord(spoken + words[wPtr + 1]);
+          if (isWordMatch(combinedSpoken, scriptClean)) {
+            sPtr++;
+            wPtr += 2;
+            continue;
+          }
+        }
+
+        // Minor skip tolerance: user missed 1 short word, next script word matches
+        if (sPtr + 1 < tokens.length && isWordMatch(spoken, tokens[sPtr + 1].cleanWord)) {
+          sPtr += 2;
+          wPtr++;
+          continue;
+        }
+
+        // Sequence diverged: STOP. Never leap over unsaid words.
+        break;
+      }
+
+      const verifiedIndex = Math.min(tokens.length - 1, sPtr);
+
+      if (verifiedIndex > currentIndex) {
+        setCurrentIndex(verifiedIndex);
+        alignViewportToIndex(verifiedIndex, false);
+        session.lastVerifiedIndex = verifiedIndex;
+      }
+
+      if (isFinal) {
+        session.anchorIndex = Math.max(currentIndex, session.lastVerifiedIndex);
+        session.currentResultIndex = -1;
       }
     };
   }, [speechEngine, isPlaying, tokens, currentIndex, alignViewportToIndex]);
@@ -193,13 +258,9 @@ export default function StudioPrompter({
 
       const viewport = viewportRef.current;
       if (viewport && isPlaying) {
-        const vadSpeaking = isSpeaking;
-
-        // In 'auto' mode: constant scroll
-        // In 'hybrid' or 'speech' mode: scroll smoothly while speaking, pause when silent
-        const shouldAdvance = settings.mode === 'auto' || (vadSpeaking && settings.mode !== 'manual');
-
-        if (shouldAdvance) {
+        // ONLY in pure 'auto' mode: constant scroll at scrollSpeedWpm
+        // In 'hybrid' (Voice-Sync) or 'manual' mode: NEVER auto-advance with time/WPM!
+        if (settings.mode === 'auto') {
           const pixPerSec = settings.scrollSpeedWpm * 1.8;
           const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
           if (scrollAnimRef.current.targetScrollTop < maxScroll) {
@@ -208,12 +269,12 @@ export default function StudioPrompter({
               scrollAnimRef.current.targetScrollTop + pixPerSec * delta
             );
 
-            // Advance current word based on vertical position
+            // In pure auto-scroll mode, advance word based on vertical position
             const cueY = viewport.clientHeight * 0.35;
             const vTop = viewport.getBoundingClientRect().top;
             if (currentIndex < tokens.length - 1) {
               const nextEl = viewport.querySelector(`[data-token-id="${currentIndex + 1}"]`);
-              if (nextEl && nextEl.getBoundingClientRect().top - vTop <= cueY + 20) {
+              if (nextEl && nextEl.getBoundingClientRect().top - vTop <= cueY + 15) {
                 setCurrentIndex(prev => Math.min(tokens.length - 1, prev + 1));
               }
             }
@@ -225,7 +286,7 @@ export default function StudioPrompter({
       if (viewport && !scrollAnimRef.current.isUserTouching) {
         const diff = scrollAnimRef.current.targetScrollTop - scrollAnimRef.current.currentScrollTop;
         if (Math.abs(diff) > 0.1) {
-          scrollAnimRef.current.currentScrollTop += Math.sign(diff) * Math.max(0.4, Math.abs(diff) * 0.15);
+          scrollAnimRef.current.currentScrollTop += Math.sign(diff) * Math.max(0.3, Math.abs(diff) * 0.12);
           if (Math.abs(scrollAnimRef.current.targetScrollTop - scrollAnimRef.current.currentScrollTop) < 0.5) {
             scrollAnimRef.current.currentScrollTop = scrollAnimRef.current.targetScrollTop;
           }
@@ -244,7 +305,7 @@ export default function StudioPrompter({
         cancelAnimationFrame(scrollAnimRef.current.rafId);
       }
     };
-  }, [isPlaying, isSpeaking, settings.mode, settings.scrollSpeedWpm, currentIndex, tokens.length]);
+  }, [isPlaying, settings.mode, settings.scrollSpeedWpm, currentIndex, tokens.length]);
 
   // Touch and manual wheel scroll event binding
   useEffect(() => {

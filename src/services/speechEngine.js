@@ -17,6 +17,7 @@ export class SpeechEngine {
     this._restartAttempts = 0;
     this._finalAccumulated = '';
 
+    this.onSpeechPhrase = null;
     this.onTokensMatched = null;
     this.onInterimTranscript = null;
     this.onSpeechActivity = null;
@@ -50,17 +51,18 @@ export class SpeechEngine {
       if (speaking) {
         this.isSpeaking = true;
         if (this.onSpeechActivity) this.onSpeechActivity(true);
+        // Fast pause detection: 550ms silence stops speaking status
         this._speakingTimeout = setTimeout(() => {
           this.isSpeaking = false;
           if (this.onSpeechActivity) this.onSpeechActivity(false);
           this._speakingTimeout = null;
-        }, 2000);
+        }, 550);
       } else {
         this._speakingTimeout = setTimeout(() => {
           this.isSpeaking = false;
           if (this.onSpeechActivity) this.onSpeechActivity(false);
           this._speakingTimeout = null;
-        }, 1200);
+        }, 400);
       }
     };
 
@@ -77,8 +79,8 @@ export class SpeechEngine {
     this.recognition.onresult = (event) => {
       setSpeaking(true);
 
-      let interimText = '';
-      let newFinal = '';
+      let latestInterim = '';
+      let latestFinal = '';
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const r = event.results[i];
@@ -89,25 +91,37 @@ export class SpeechEngine {
             best = r[a].transcript;
           }
         }
+
+        const trimmed = best.trim();
+        if (!trimmed) continue;
+
         if (r.isFinal) {
-          newFinal += best + ' ';
+          latestFinal = trimmed;
         } else {
-          interimText += best;
+          latestInterim = trimmed;
+        }
+
+        // Deliver clean, isolated phrase event
+        if (this.onSpeechPhrase) {
+          this.onSpeechPhrase({
+            resultIndex: i,
+            transcript: trimmed,
+            isFinal: Boolean(r.isFinal),
+            words: cleanAndTokenize(trimmed)
+          });
         }
       }
 
-      if (newFinal) this._finalAccumulated += newFinal;
-
-      const fullContext = (this._finalAccumulated + ' ' + interimText).trim();
-      const currentLive = (interimText || newFinal).trim();
-
+      const currentLive = (latestInterim || latestFinal).trim();
       if (this.onInterimTranscript && currentLive) {
         this.onInterimTranscript(currentLive);
       }
 
+      if (latestFinal) this._finalAccumulated += latestFinal + ' ';
+      const fullContext = (this._finalAccumulated + ' ' + latestInterim).trim();
       if (fullContext && this.onTokensMatched) {
         const tokens = cleanAndTokenize(fullContext);
-        this.onTokensMatched(tokens, !interimText, fullContext);
+        this.onTokensMatched(tokens, !latestInterim, fullContext);
       }
     };
 

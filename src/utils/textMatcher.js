@@ -22,25 +22,26 @@ export function normalizeWord(str) {
       .replace(/\u0130/g, 'i')
       .replace(/I/g, '\u0131')
       .toLowerCase()
-      .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'\u00AB\u00BB\u2018\u2019\u201C\u201D]/g, '')
+      .replace(/[\u2010-\u2015\u2026\u00AB\u00BB\u2018\u2019\u201C\u201D.,\/#!$%\^&\*;:{}=\-_`~()?"'<>\[\]\\|]/g, '')
       .trim()
   );
 }
 
 export function cleanAndTokenize(rawText) {
   if (!rawText) return [];
-  const fillerWords = new Set([
-    'uh', 'um', 'ah', 'er', 'ııı', 'eee', 'şey', 'yani', 'gibi',
-    'the', 'a', 'an', 'and', 've', 'bir'
+  // Only strip pure hesitation / non-verbal phonemes, never discard real linguistic words
+  const hesitationSounds = new Set([
+    'uh', 'um', 'ah', 'er', 'ııı', 'eee', 'mmm', 'hıı', 'hm'
   ]);
 
   return rawText
     .replace(/İ/g, 'i')
     .replace(/I/g, 'ı')
     .toLowerCase()
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'«»'""]/g, ' ')
+    .replace(/[\u2010-\u2015\u2026\u00AB\u00BB\u2018\u2019\u201C\u201D.,\/#!$%\^&\*;:{}=\-_`~()?"'<>\[\]\\|]/g, ' ')
     .split(/\s+/)
-    .filter(t => t.length > 0 && !fillerWords.has(t));
+    .map(t => normalizeWord(t))
+    .filter(t => t.length > 0 && !hesitationSounds.has(t));
 }
 
 export function levenshteinSimilarity(s1, s2) {
@@ -66,14 +67,30 @@ export function isWordMatch(spoken, cleanWord) {
 
   const ns = normalizeWord(spoken);
   const nc = normalizeWord(cleanWord);
-  if (ns && nc && ns === nc) return true;
-  if (ns.length >= 4 && nc.length >= 4 && (nc.startsWith(ns) || ns.startsWith(nc))) return true;
+  if (!ns || !nc) return false;
+  if (ns === nc) return true;
 
-  const lenRatio = Math.min(ns.length, nc.length) / Math.max(ns.length || 1, nc.length || 1);
-  if (lenRatio < 0.5) return false;
+  // Strict constraint for short words (1 to 3 letters, e.g. 'bu', 've', 'bir', 'biz', 'o')
+  // Short words MUST match exactly to prevent false leaps across the script
+  if (ns.length <= 3 || nc.length <= 3) {
+    return ns === nc;
+  }
 
-  return Math.max(
-    levenshteinSimilarity(spoken, cleanWord),
-    levenshteinSimilarity(ns, nc)
-  ) >= 0.72;
+  const minLen = Math.min(ns.length, nc.length);
+  const maxLen = Math.max(ns.length, nc.length);
+  const lenDiff = Math.abs(ns.length - nc.length);
+
+  // Controlled agglutinative suffix tolerance for words with length >= 4
+  // Allows small suffix additions (e.g. layihe -> layihemiz) if ratio >= 0.70 and diff <= 3
+  if ((nc.startsWith(ns) || ns.startsWith(nc)) && lenDiff <= 3 && (minLen / maxLen) >= 0.70) {
+    return true;
+  }
+
+  // High-confidence similarity for minor transcription variance (threshold >= 0.80)
+  if ((minLen / maxLen) >= 0.75) {
+    const sim = levenshteinSimilarity(ns, nc);
+    if (sim >= 0.80) return true;
+  }
+
+  return false;
 }

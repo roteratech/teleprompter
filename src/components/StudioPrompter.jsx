@@ -166,67 +166,106 @@ export default function StudioPrompter({
       if (!isPlaying) setIsPlaying(true);
 
       const currentIdx = currentIndexRef.current;
+      const scriptEnd = tokens.length - 1;
 
-      // Dynamic moving window: always anchored to freshest reader position
-      const startScan = Math.max(0, currentIdx - 2);
-      const endScan = Math.min(tokens.length - 1, currentIdx + 12);
+      // 1. Locate starting anchor forward from currentIdx (never backwards to avoid repeated word traps)
+      let anchorS = -1;
+      let anchorW = -1;
 
-      // Search recent spoken words in the moving window ahead of currentIdx
-      const recentWords = words.slice(-6);
-      let bestMatchedToken = -1;
-      let scriptAdvance = 1;
-
-      for (let w = 0; w < recentWords.length; w++) {
-        const spoken = recentWords[w];
-        if (!spoken) continue;
-
-        // Scan tokens from startScan up to endScan
-        for (let s = startScan; s <= endScan; s++) {
-          const scriptClean = tokens[s].cleanWord;
-
-          // 1. Direct or phonetic match
-          if (isWordMatch(spoken, scriptClean)) {
-            if (s > bestMatchedToken) {
-              bestMatchedToken = s;
-              scriptAdvance = 1;
-            }
+      for (let w = 0; w < words.length; w++) {
+        for (let s = currentIdx; s <= Math.min(scriptEnd, currentIdx + 3); s++) {
+          if (isWordMatch(words[w], tokens[s].cleanWord)) {
+            anchorS = s;
+            anchorW = w;
             break;
           }
+          if (s + 1 <= scriptEnd && isWordMatch(words[w], normalizeWord(tokens[s].cleanWord + tokens[s + 1].cleanWord))) {
+            anchorS = s;
+            anchorW = w;
+            break;
+          }
+        }
+        if (anchorS !== -1) break;
+      }
 
-          // 2. Compound match (1 spoken word = 2 script tokens, e.g. "bugün" == "bu" + "gün")
-          if (s + 1 < tokens.length) {
-            const combinedScript = normalizeWord(tokens[s].cleanWord + tokens[s + 1].cleanWord);
-            if (isWordMatch(spoken, combinedScript)) {
-              if (s + 1 > bestMatchedToken) {
-                bestMatchedToken = s;
-                scriptAdvance = 2;
-              }
+      // Fast speech recovery window (up to currentIdx + 6)
+      if (anchorS === -1) {
+        for (let w = Math.max(0, words.length - 4); w < words.length; w++) {
+          for (let s = currentIdx + 4; s <= Math.min(scriptEnd, currentIdx + 6); s++) {
+            if (isWordMatch(words[w], tokens[s].cleanWord)) {
+              anchorS = s;
+              anchorW = w;
               break;
             }
           }
-
-          // 3. Reverse compound (2 spoken words = 1 script token)
-          if (w + 1 < recentWords.length) {
-            const combinedSpoken = normalizeWord(spoken + recentWords[w + 1]);
-            if (isWordMatch(combinedSpoken, scriptClean)) {
-              if (s > bestMatchedToken) {
-                bestMatchedToken = s;
-                scriptAdvance = 1;
-              }
-              break;
-            }
-          }
+          if (anchorS !== -1) break;
         }
       }
 
-      if (bestMatchedToken !== -1) {
-        // Prevent huge unearned leaps: at most 4 tokens forward in a single event
-        const maxAllowed = Math.min(tokens.length - 1, currentIdx + 4);
-        const nextIndex = Math.min(maxAllowed, bestMatchedToken + scriptAdvance);
+      if (anchorS === -1) return;
 
-        if (nextIndex > currentIdx) {
-          updateCurrentIndex(nextIndex);
+      // 2. From anchor, march forward sequentially matching spoken words
+      let s = anchorS;
+      let w = anchorW;
+      let furthestReached = anchorS;
+
+      while (w < words.length && s <= scriptEnd) {
+        const spoken = words[w];
+        const scriptClean = tokens[s].cleanWord;
+
+        // Direct word match
+        if (isWordMatch(spoken, scriptClean)) {
+          furthestReached = s;
+          s++;
+          w++;
+          continue;
         }
+
+        // Spoken compound: 1 spoken word = 2 script tokens (e.g. "bugün" == "bu" + "gün")
+        if (s + 1 <= scriptEnd) {
+          const combined = normalizeWord(tokens[s].cleanWord + tokens[s + 1].cleanWord);
+          if (isWordMatch(spoken, combined)) {
+            furthestReached = s + 1;
+            s += 2;
+            w++;
+            continue;
+          }
+        }
+
+        // Script compound: 2 spoken words = 1 script token (e.g. "bu" + "gün" == "bugün")
+        if (w + 1 < words.length) {
+          const combinedSpoken = normalizeWord(spoken + words[w + 1]);
+          if (isWordMatch(combinedSpoken, scriptClean)) {
+            furthestReached = s;
+            s++;
+            w += 2;
+            continue;
+          }
+        }
+
+        // Minor skip tolerance: user skipped 1 short script word
+        if (s + 1 <= scriptEnd && isWordMatch(spoken, tokens[s + 1].cleanWord)) {
+          furthestReached = s + 1;
+          s += 2;
+          w++;
+          continue;
+        }
+
+        // Hesitation: word was filler sound in speech
+        if (w + 1 < words.length && isWordMatch(words[w + 1], scriptClean)) {
+          furthestReached = s;
+          s++;
+          w += 2;
+          continue;
+        }
+
+        // Diverged
+        break;
+      }
+
+      const nextIndex = Math.min(scriptEnd, furthestReached + 1);
+      if (nextIndex > currentIdx) {
+        updateCurrentIndex(nextIndex);
       }
     };
   }, [speechEngine, isPlaying, tokens, updateCurrentIndex]);

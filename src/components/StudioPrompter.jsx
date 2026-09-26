@@ -25,7 +25,7 @@ export default function StudioPrompter({
   const videoPreviewRef = useRef(null);
 
   // Prompter states
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [showTranscriptPill, setShowTranscriptPill] = useState(false);
@@ -162,16 +162,17 @@ export default function StudioPrompter({
     };
 
     speechEngine.onSpeechPhrase = ({ resultIndex, transcript, isFinal, words }) => {
-      if (!isPlaying || !tokens.length) return;
-      if (!words || !words.length) return;
+      if (!tokens.length || !words || !words.length) return;
+      if (!isPlaying) setIsPlaying(true);
 
       const session = speechSessionRef.current;
+      const currentIdx = currentIndexRef.current;
 
       // When a new speech result index arrives, anchor from freshest confirmed position
       if (resultIndex !== session.currentResultIndex) {
         session.currentResultIndex = resultIndex;
-        session.anchorIndex = currentIndexRef.current;
-        session.lastVerifiedIndex = currentIndexRef.current;
+        session.anchorIndex = currentIdx;
+        session.lastVerifiedIndex = currentIdx;
       }
 
       const baseStart = Math.min(session.anchorIndex, currentIdx);

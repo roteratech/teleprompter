@@ -15,8 +15,7 @@ export function foldDiacritics(str) {
     .replace(/[\u00C7\u00E7]/g, 'c') // Ç, ç -> c
     .replace(/[qQ]/g, 'k')          // Azerbaijani q -> k (haqqında <-> hakkında)
     .replace(/[xX]/g, 'h')          // Azerbaijani x -> h (xeyir <-> heyir)
-    .replace(/[wW]/g, 'v')          // w -> v
-    .replace(/(.)\1+/g, '$1');      // Collapse duplicate consecutive characters (haqqinda -> hakinda)
+    .replace(/[wW]/g, 'v');         // w -> v
 }
 
 export function normalizeWord(str) {
@@ -74,10 +73,14 @@ export function isWordMatch(spoken, cleanWord) {
   if (!ns || !nc) return false;
   if (ns === nc) return true;
 
+  // Comparison with collapsed consecutive double letters (e.g. haqqında -> hakkinda -> hakinda)
+  const cs = ns.replace(/(.)\1+/g, '$1');
+  const cc = nc.replace(/(.)\1+/g, '$1');
+  if (cs === cc) return true;
+
   // Short words (1 to 3 letters, e.g. 'bu', 've', 'bir', 'biz', 'o')
-  // Must match exactly to prevent false leaps across the script
   if (ns.length <= 3 || nc.length <= 3) {
-    return ns === nc;
+    return ns === nc || cs === cc;
   }
 
   const minLen = Math.min(ns.length, nc.length);
@@ -85,15 +88,17 @@ export function isWordMatch(spoken, cleanWord) {
   const lenDiff = Math.abs(ns.length - nc.length);
 
   // Agglutinative suffix tolerance for words with length >= 4
-  // Allows small suffix additions (e.g. layihe -> layihemiz) if ratio >= 0.65 and diff <= 3
-  if ((nc.startsWith(ns) || ns.startsWith(nc)) && lenDiff <= 3 && (minLen / maxLen) >= 0.65) {
+  if ((nc.startsWith(ns) || ns.startsWith(nc) || cc.startsWith(cs) || cs.startsWith(cc)) && lenDiff <= 3 && (minLen / maxLen) >= 0.65) {
     return true;
   }
 
-  // High-confidence similarity for transcription variance (threshold >= 0.78)
-  if ((minLen / maxLen) >= 0.70) {
-    const sim = levenshteinSimilarity(ns, nc);
-    if (sim >= 0.78) return true;
+  // High-confidence similarity
+  if ((minLen / maxLen) >= 0.65) {
+    const sim = Math.max(
+      levenshteinSimilarity(ns, nc),
+      levenshteinSimilarity(cs, cc)
+    );
+    if (sim >= 0.75) return true;
   }
 
   return false;

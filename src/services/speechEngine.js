@@ -160,12 +160,21 @@ export class SpeechEngine {
   }
 
   setLanguage(lang) {
+    if (this.language === lang && this.recognition?.lang === lang) return;
     this.language = lang;
     if (this.recognition) {
       this.recognition.lang = lang;
       if (this.isRecognizing) {
-        this.stop();
-        this.start();
+        try {
+          this.recognition.abort();
+        } catch (e) {}
+        setTimeout(() => {
+          if (this.isRecognizing) {
+            try {
+              this.recognition.start();
+            } catch (e) {}
+          }
+        }, 150);
       }
     }
   }
@@ -174,12 +183,16 @@ export class SpeechEngine {
     if (!this.recognition) {
       if (!this.initialize()) return false;
     }
+    this.isRecognizing = true;
     try {
-      this.isRecognizing = true;
       this._finalAccumulated = '';
       this.recognition.start();
       return true;
     } catch (e) {
+      if (e.name === 'InvalidStateError') {
+        // Recognition already active
+        return true;
+      }
       return false;
     }
   }
